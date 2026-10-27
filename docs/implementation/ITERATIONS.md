@@ -10,7 +10,7 @@ The 29 specifications are the requirement sources. This file describes manageabl
 
 | Package | Focus | Prerequisites for implementation | Current state |
 | --- | --- | --- | --- |
-| I01 | Scope, risk, and hospital policy | None | Planned; owner unassigned |
+| I01 | Scope, risk, and hospital policy | None | In progress; pilot baseline drafted; hospital owners and approvals open |
 | I02 | Roles, accounts, and authentication | Relevant I01 identity and authorization decisions | Planned; owner unassigned |
 | I03 | Screen flows, dashboard specifications, and brand | Relevant I01 user and scope decisions; use I02 permission contract | Planned; owner unassigned |
 | I04 | Vaults, keys, state machines, and skill alignment | Relevant I01 boundaries; I02 capability contract | Planned; owner unassigned |
@@ -28,6 +28,8 @@ Design and policy work can overlap. Foundational browser security begins with I0
 ## I01 — Agree on scope and resolve blocking policy decisions
 
 **Read:** [Product scope](01-product-scope.md), [risk and decision register](16-risk-and-decision-register.md), [threat model](17-threat-model.md), [patient sharing and clinical safety](18-patient-sharing-and-clinical-safety.md), and [privacy and physical deployment](27-privacy-and-physical-deployment.md).
+
+**Current artifact:** [I01 pilot baseline and decision ledger](I01-PILOT-BASELINE.md). This is a proposal; no hospital owner or approval is recorded.
 
 Small deliverables:
 
