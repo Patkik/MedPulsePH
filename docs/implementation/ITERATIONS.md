@@ -2,7 +2,7 @@
 
 [Plan index](../../IMPLEMENTATION_PLAN.md)
 
-**Status:** All packages are planned; application implementation has not started. Completing documentation does not mean its controls have been implemented or tested. This breakdown reorganizes the existing plan and does not enable a feature, change a security invariant, or install skill enforcement.
+**Status:** I01 has a proposed pilot baseline, I03 has a synthetic-data design preview, and I04 has begun with skill-alignment instructions and a mirror check. These are partial iterations; they do not implement authentication, clinical care, or production access controls and do not authorize real-patient use. Semantic skill alignment requires review.
 
 The 29 specifications are the requirement sources. This file describes manageable work packages and their dependencies. Each package can take several small changes; it is not a promised calendar sprint. Package numbers are stable identifiers, not a requirement to finish every package strictly in numerical order.
 
@@ -12,8 +12,8 @@ The 29 specifications are the requirement sources. This file describes manageabl
 | --- | --- | --- | --- |
 | I01 | Scope, risk, and hospital policy | None | In progress; pilot baseline drafted; hospital owners and approvals open |
 | I02 | Roles, accounts, and authentication | Relevant I01 identity and authorization decisions | Planned; owner unassigned |
-| I03 | Screen flows, dashboard specifications, and brand | Relevant I01 user and scope decisions; use I02 permission contract | Planned; owner unassigned |
-| I04 | Vaults, keys, state machines, and skill alignment | Relevant I01 boundaries; I02 capability contract | Planned; owner unassigned |
+| I03 | Screen flows, dashboard specifications, and brand | Relevant I01 user and scope decisions; use I02 permission contract | In progress; early role preview only |
+| I04 | Vaults, keys, state machines, and skill alignment | Relevant I01 boundaries; I02 capability contract | In progress; alignment rule and mirror check only |
 | I05 | NFC proof and emergency access | I04 durable state and keys; I02 actor/context contracts for clinical handoff | Planned; owner unassigned |
 | I06 | Patient enrollment, bands, and workstation pairing | I02 identity; I04 state transitions; I05 verified reading | Planned; owner unassigned |
 | I07 | Administration, durable audit, and operational events | I02 permissions; I04 repositories and service capabilities | Planned; owner unassigned |
@@ -56,6 +56,8 @@ Small deliverables:
 ## I03 — Specify screen flows, dashboards, and visual identity
 
 **Read:** [Users/workspaces](03-users-and-workspaces.md), [dashboards](06-dashboards.md), [UI design/resilience](12-ui-design-and-resilience.md), [logo brief](13-logo-and-identity.md), and [screen/API specifications](28-screen-and-api-specifications.md).
+
+**Current artifact:** An early Expo web design preview in `app/`. It uses no real patient data, does not authenticate users, and does not implement clinical or NFC access. Formal dashboard flows, logo stress tests, stakeholder reviews, and access control remain outstanding.
 
 Small deliverables:
 

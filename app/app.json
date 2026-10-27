@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "MedPulsePH Preview",
+    "slug": "medpulseph",
+    "scheme": "medpulseph",
+    "version": "0.1.0",
+    "userInterfaceStyle": "light",
+    "plugins": ["expo-router"],
+    "ios": { "supportsTablet": true },
+    "web": { "output": "static" }
+  }
+}

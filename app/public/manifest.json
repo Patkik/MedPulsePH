@@ -1,0 +1,12 @@
+{
+  "name": "MedPulsePH Preview",
+  "short_name": "MedPulsePH",
+  "description": "A design preview for a patient-centered care platform.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F3F7F5",
+  "theme_color": "#173B33",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
