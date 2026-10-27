@@ -1,6 +1,6 @@
 # 22. Browser, PWA, API, and abuse hardening
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress; `backend/src/hardening.rs` attaches mandatory HTTP response security headers (`Cache-Control: no-store, no-cache, must-revalidate`, `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`) to `router()`, redacts sensitive tap query parameters (`redact_sensitive_url_params`), enforces outbound HTTPS + SSRF destination checks (`validate_outbound_https_destination`), and constructs hospital-aware composite rate-limit keys (`CompositeRateLimitKey`).
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I09
 

@@ -9,17 +9,24 @@ pub mod auth;
 pub mod crypto;
 pub mod encounter;
 pub mod enrollment;
+pub mod fhir;
+pub mod hardening;
 pub mod nfc;
 pub mod vault;
 
 pub use vault::{ClinicalPool, IdentityPool};
 
-use axum::{Router, http::StatusCode, routing::get};
+use axum::{Router, http::StatusCode, middleware, routing::get};
 
 /// Only process liveness is exposed. It does not assert database readiness,
 /// and all unfinished authentication, NFC tap, emergency, and FHIR clinical routes remain disabled (404).
+/// Strict browser/API security headers (`Cache-Control: no-store`, `Content-Security-Policy`,
+/// `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`)
+/// are applied to every response (`22-pwa-api-and-abuse-security.md`).
 pub fn router() -> Router {
-    Router::new().route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
+    Router::new()
+        .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
+        .layer(middleware::from_fn(hardening::security_headers_middleware))
 }
 
 #[cfg(test)]
@@ -43,6 +50,15 @@ mod tests {
         enrollment::{
             EnrollmentChannel, EnrollmentError, PatientEnrollmentRecord, PatientIdentityLinkState,
             WorkstationPairingToken,
+        },
+        fhir::{
+            FhirCapabilityStatement, FhirCodeableConcept, FhirCoding, FhirEncounterResource,
+            FhirError, FhirMeta, FhirPeriod, FhirReference, VaultAPatientIdentitySlice,
+            assemble_fhir_patient_at_boundary, validate_scoped_fhir_encounter,
+        },
+        hardening::{
+            CompositeRateLimitKey, HardeningError, redact_sensitive_url_params,
+            validate_outbound_https_destination,
         },
         nfc::{
             DurableBandReplayState, EmergencyFieldProvenance, EmergencyTriageSummary,
@@ -73,7 +89,36 @@ mod tests {
     #[tokio::test]
     async fn only_liveness_is_exposed() -> Result<(), Box<dyn std::error::Error>> {
         let live = Request::builder().uri("/health/live").body(Body::empty())?;
-        assert_eq!(router().oneshot(live).await?.status(), StatusCode::NO_CONTENT);
+        let response = router().oneshot(live).await?;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            response
+                .headers()
+                .get("cache-control")
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store, no-cache, must-revalidate")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-frame-options")
+                .and_then(|v| v.to_str().ok()),
+            Some("DENY")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-content-type-options")
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("referrer-policy")
+                .and_then(|v| v.to_str().ok()),
+            Some("no-referrer")
+        );
 
         for path in [
             "/",
@@ -83,7 +128,15 @@ mod tests {
             "/api/v1/emergency/sample",
         ] {
             let request = Request::builder().uri(path).body(Body::empty())?;
-            assert_eq!(router().oneshot(request).await?.status(), StatusCode::NOT_FOUND);
+            let denied_resp = router().oneshot(request).await?;
+            assert_eq!(denied_resp.status(), StatusCode::NOT_FOUND);
+            assert_eq!(
+                denied_resp
+                    .headers()
+                    .get("cache-control")
+                    .and_then(|v| v.to_str().ok()),
+                Some("no-store, no-cache, must-revalidate")
+            );
         }
         Ok(())
     }
@@ -1109,6 +1162,208 @@ mod tests {
                 OutboxDeliveryState::DeadLettered
             ))
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn security_headers_url_redaction_ssrf_and_composite_rate_limits()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // Sensitive NFC tap parameters (d, c, pin, token) are redacted before logging.
+        let raw_url =
+            "https://medpulse.example/v1/tap?d=0123456789abcdef0123456789abcdef&c=fedcba9876543210&hospital=hosp-manila#frag-secret";
+        let redacted = redact_sensitive_url_params(raw_url);
+        assert_eq!(
+            redacted,
+            "https://medpulse.example/v1/tap?d=[REDACTED]&c=[REDACTED]&hospital=hosp-manila#[REDACTED]"
+        );
+
+        // Outbound SSRF validator blocks HTTP, loopback, RFC1918, cloud metadata IP, and unapproved hosts.
+        let allowlist = ["fhir.partner-hospital.ph"];
+        assert_eq!(
+            validate_outbound_https_destination("http://fhir.partner-hospital.ph/r4", &allowlist),
+            Err(HardeningError::InsecureScheme)
+        );
+        for forbidden_url in [
+            "https://127.0.0.1/admin",
+            "https://localhost:8443/hook",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://10.0.0.15/internal",
+            "https://192.168.1.10/api",
+            "https://[::1]/loopback",
+            "https://vault.internal/keys",
+        ] {
+            assert_eq!(
+                validate_outbound_https_destination(forbidden_url, &allowlist),
+                Err(HardeningError::ForbiddenAddressRange)
+            );
+        }
+        assert_eq!(
+            validate_outbound_https_destination("https://evil.example.com/r4", &allowlist),
+            Err(HardeningError::HostNotAllowlisted)
+        );
+        assert_eq!(
+            validate_outbound_https_destination(
+                "https://FHIR.Partner-Hospital.ph/r4/Patient",
+                &allowlist
+            )?,
+            "fhir.partner-hospital.ph"
+        );
+
+        // Hospital-aware composite rate limit keys isolate clinicians sharing a hospital NAT IP.
+        let key_doc_1 = CompositeRateLimitKey::new(
+            "pin_handshake",
+            "doc-101",
+            Some("hosp-manila"),
+            "203.0.113.10",
+        )?;
+        let key_doc_2 = CompositeRateLimitKey::new(
+            "pin_handshake",
+            "doc-202",
+            Some("hosp-manila"),
+            "203.0.113.10",
+        )?;
+        assert_ne!(key_doc_1, key_doc_2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn fhir_r4_boundary_assembly_reference_scope_and_mass_assignment_guards()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let deriver = BlindIdDeriver::new(1, [0xC3; 32])?;
+        let blind_id_a = deriver.derive("synthetic-patient-fhir-a")?;
+        let blind_id_b = deriver.derive("synthetic-patient-fhir-b")?;
+
+        let pin_verifier = PatientPinVerifier::new([0xD4; 32]);
+        let pin_hash = pin_verifier.hash_pin("615243")?;
+        let doctor = sample_doctor("hosp-manila");
+
+        let mut tap_ctx = AcceptedTapContext::new(
+            "tap-fhir-1".to_string(),
+            blind_id_a.clone(),
+            [0x04, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36],
+            1,
+            BandStatus::Active,
+            "hosp-manila".to_string(),
+            doctor.actor_id.clone(),
+            1_700_000_000,
+            120,
+        )?;
+        let session = mint_verified_clinic_session(
+            &doctor,
+            &mut tap_ctx,
+            "615243",
+            &pin_hash,
+            &pin_verifier,
+            "sess-fhir-1".to_string(),
+            1_700_000_005,
+            1,
+        )?;
+        let live_state = TransactionBoundaryState {
+            current_unix_secs: 1_700_000_100,
+            band_status: BandStatus::Active,
+            doctor_membership: MembershipStatus::Active,
+            doctor_credential: CredentialStatus::Approved {
+                reviewer_actor_id: "cred-reviewer-1".to_string(),
+            },
+            session_revoked: false,
+            patient_consent_withdrawn: false,
+            revocation_version: 1,
+        };
+
+        // Boundary assembly produces a FHIR R4 Patient resource without storing PII in Vault B.
+        let vault_a_slice = VaultAPatientIdentitySlice {
+            blind_patient_id: blind_id_a.clone(),
+            family_name: "Dela Cruz".to_string(),
+            given_name: "Maria Synthetic".to_string(),
+            birth_date_iso: "1988-04-12".to_string(),
+            administrative_gender: "female".to_string(),
+        };
+        let fhir_patient = assemble_fhir_patient_at_boundary(
+            &session,
+            &live_state,
+            "hosp-manila",
+            &vault_a_slice,
+            1,
+            "2026-10-28T03:30:00Z",
+        )?;
+        assert_eq!(fhir_patient.resource_type, "Patient");
+        assert_eq!(fhir_patient.id, blind_id_a.to_canonical_string());
+        assert_eq!(fhir_patient.meta.source, "urn:medpulse:hospital:hosp-manila");
+
+        // Undeclared fields (mass-assignment attempt) are rejected by serde deny_unknown_fields.
+        let mass_assignment_json = r#"{
+            "resourceType": "Patient",
+            "id": "bp_v1_test",
+            "meta": {"versionId": "1", "lastUpdated": "2026-10-28T00:00:00Z", "source": "urn:test"},
+            "active": true,
+            "name": [{"family": "Cruz", "given": ["Maria"]}],
+            "gender": "female",
+            "birthDate": "1988-04-12",
+            "isAdminOverride": true
+        }"#;
+        assert!(serde_json::from_str::<crate::fhir::FhirPatientResource>(mass_assignment_json).is_err());
+
+        // Scoped FHIR Encounter validation accepts matching patient reference and rejects cross-patient reference.
+        let mut fhir_enc = FhirEncounterResource {
+            resource_type: "Encounter".to_string(),
+            id: "enc-fhir-1".to_string(),
+            meta: FhirMeta {
+                version_id: "1".to_string(),
+                last_updated: "2026-10-28T03:30:00Z".to_string(),
+                source: "urn:medpulse:hospital:hosp-manila".to_string(),
+            },
+            status: "finished".to_string(),
+            code: FhirCodeableConcept {
+                coding: vec![FhirCoding {
+                    system: "http://terminology.hl7.org/CodeSystem/v3-ActCode".to_string(),
+                    code: "AMB".to_string(),
+                    display: "ambulatory".to_string(),
+                }],
+                text: "Outpatient synthetic follow-up".to_string(),
+            },
+            subject: FhirReference {
+                reference: format!("Patient/{}", blind_id_a.to_canonical_string()),
+            },
+            period: FhirPeriod {
+                start: "2026-10-28T03:15:00Z".to_string(),
+                end: Some("2026-10-28T03:30:00Z".to_string()),
+            },
+        };
+        validate_scoped_fhir_encounter(&session, &live_state, "hosp-manila", &blind_id_a, &fhir_enc)?;
+
+        // Cross-patient subject reference is rejected.
+        fhir_enc.subject.reference = format!("Patient/{}", blind_id_b.to_canonical_string());
+        assert!(matches!(
+            validate_scoped_fhir_encounter(
+                &session,
+                &live_state,
+                "hosp-manila",
+                &blind_id_a,
+                &fhir_enc
+            ),
+            Err(FhirError::CrossPatientReferenceForbidden { .. })
+        ));
+
+        // Script injection in FHIR text is rejected.
+        fhir_enc.subject.reference = format!("Patient/{}", blind_id_a.to_canonical_string());
+        fhir_enc.code.text = "<script>alert(1)</script>".to_string();
+        assert_eq!(
+            validate_scoped_fhir_encounter(
+                &session,
+                &live_state,
+                "hosp-manila",
+                &blind_id_a,
+                &fhir_enc
+            ),
+            Err(FhirError::UnsafeNarrativeContent)
+        );
+
+        // CapabilityStatement explicitly lists disabled bulk/unconstrained operations.
+        let cap = FhirCapabilityStatement::pilot_baseline();
+        assert!(cap.disabled_operations.contains(&"$export".to_string()));
+        assert!(cap.disabled_operations.contains(&"_include=*".to_string()));
 
         Ok(())
     }

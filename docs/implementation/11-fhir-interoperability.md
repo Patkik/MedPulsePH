@@ -1,6 +1,6 @@
 # 11. FHIR and partner interoperability
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress; `backend/src/fhir.rs` implements `FhirCapabilityStatement` (explicitly disabling `$export`, `$everything`, `_include=*`, and uploads), boundary assembly of `FhirPatientResource` from Vault A (`assemble_fhir_patient_at_boundary`) without storing PII in Vault B, `#[serde(deny_unknown_fields)]` mass-assignment guards, patient/hospital reference validation (`validate_scoped_fhir_encounter`), and narrative script sanitization (`sanitize_fhir_text`). Live HTTP FHIR routes and external partner SMART workflows remain disabled (`404`).
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I10
 

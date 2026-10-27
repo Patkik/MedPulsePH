@@ -1,6 +1,6 @@
 # 23. Attachments, exports, integrations, and notification safety
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress; file uploads and clinical record exports remain explicitly disabled by default (`ProtectedAction::ExportClinicalRecords` denied in `backend/src/auth.rs`, disabled operations published in `FhirCapabilityStatement::pilot_baseline()`), while outbound webhook/partner URLs are validated against SSRF and host allowlists in `backend/src/hardening.rs`.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I10
 
