@@ -1,6 +1,6 @@
 # 15. Testing, rollout, and acceptance
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress; automated synthetic verification (`cargo check --workspace`, strict `cargo clippy --workspace -- -D warnings -D clippy::unwrap_used`, 14 unit and end-to-end tests in `backend/src/lib.rs`, `node scripts/check-local-stack.mjs`, `node scripts/check-skill-sync.mjs`, and `npm --prefix app run typecheck` / `lint`) passes across `I01`–`I12`. Real-device NFC hardware usability and hospital clinical/privacy governance sign-off remain required before any live-patient pilot.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I12
 

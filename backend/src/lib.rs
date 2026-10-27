@@ -12,6 +12,7 @@ pub mod enrollment;
 pub mod fhir;
 pub mod hardening;
 pub mod nfc;
+pub mod recovery;
 pub mod vault;
 
 pub use vault::{ClinicalPool, IdentityPool};
@@ -64,6 +65,9 @@ mod tests {
             DurableBandReplayState, EmergencyFieldProvenance, EmergencyTriageSummary,
             MAX_OFFLINE_RECORD2_TEXT_BYTES, NTAG424_NDEF_FILE_CAPACITY_BYTES, NdefDualRecordBudget,
             NfcError, Ntag424TagKeys, validate_band_status_transition,
+        },
+        recovery::{
+            ProtectedRecoveryEvidence, VaultABandBackupSnapshot, reconcile_band_restore,
         },
         vault::{OutboxDeliveryState, ResourceVersion, ScopedIdempotencyRecord, VaultError},
     };
@@ -1364,6 +1368,174 @@ mod tests {
         let cap = FhirCapabilityStatement::pilot_baseline();
         assert!(cap.disabled_operations.contains(&"$export".to_string()));
         assert!(cap.disabled_operations.contains(&"_include=*".to_string()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn end_to_end_synthetic_journey_matrix_and_coordinated_restore()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // 1. Setup synthetic patient enrollment & NTAG 424 DNA wristband (I02, I04, I05, I06)
+        let deriver = BlindIdDeriver::new(1, [0xE5; 32])?;
+        let blind_id = deriver.derive("synthetic-e2e-patient-001")?;
+        let pin_verifier = PatientPinVerifier::new([0xF6; 32]);
+
+        let reception = AuthenticatedActor {
+            actor_id: "rec-e2e-1".to_string(),
+            hospital_id: Some("hosp-manila".to_string()),
+            role: Role::Reception,
+            membership_status: MembershipStatus::Active,
+            credential_status: CredentialStatus::NotApplicable,
+            mfa_verified: true,
+        };
+        let band_officer = AuthenticatedActor {
+            actor_id: "band-e2e-1".to_string(),
+            hospital_id: Some("hosp-manila".to_string()),
+            role: Role::BandOfficer,
+            membership_status: MembershipStatus::Active,
+            credential_status: CredentialStatus::NotApplicable,
+            mfa_verified: true,
+        };
+        let doctor = sample_doctor("hosp-manila");
+
+        let mut enrollment = PatientEnrollmentRecord::register_assisted(
+            &reception,
+            "hosp-manila",
+            blind_id.clone(),
+            EnrollmentChannel::AssistedNoPhoneAtHospital,
+        )?;
+        enrollment.verify_identity_link(&reception, "e2e-gov-id-verified", 1_700_100_000)?;
+        enrollment.configure_patient_pin_privately(Role::Patient, "739204", &pin_verifier)?;
+        let pin_hash = enrollment
+            .pin_hash()
+            .ok_or(EnrollmentError::PatientPinNotConfigured)?
+            .to_string();
+
+        let tag_uid = [0x04, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC];
+        let tag_keys = Ntag424TagKeys {
+            expected_uid: tag_uid,
+            sdm_meta_read_key: [0x1A; 16],
+            sdm_file_read_key: [0x2B; 16],
+        };
+        let mut band =
+            enrollment.issue_initial_band(&band_officer, "hosp-manila", tag_keys.clone())?;
+
+        // 2. Verify workstation pairing + NTAG 424 DNA SUN tap + PIN handshake (I05, I06, I08)
+        let prefix = b"https://medpulse.example/v1/tap?d=";
+        let (picc_10, cmac_10) = tag_keys.seal_sun_tap_for_vector(10, prefix)?;
+        let mut tap_ctx = band.verify_and_accept_tap(
+            &picc_10,
+            &cmac_10,
+            prefix,
+            "tap-e2e-10".to_string(),
+            "hosp-manila".to_string(),
+            doctor.actor_id.clone(),
+            1_700_100_010,
+            120,
+        )?;
+
+        let pairing_nonce = [0x9D; 16];
+        let mut pairing = WorkstationPairingToken::issue(
+            &doctor,
+            "hosp-manila",
+            "pair-e2e-1".to_string(),
+            "ws-er-01".to_string(),
+            pairing_nonce,
+            1_700_100_005,
+            60,
+        )?;
+        let paired_ctx = pairing.bind_verified_tap(&tap_ctx, &pairing_nonce, 1_700_100_012)?;
+        assert_eq!(paired_ctx.accepted_counter, 10);
+
+        let session = mint_verified_clinic_session(
+            &doctor,
+            &mut tap_ctx,
+            "739204",
+            &pin_hash,
+            &pin_verifier,
+            "sess-e2e-1".to_string(),
+            1_700_100_015,
+            enrollment.revocation_version(),
+        )?;
+
+        // 3. Simulate a disaster recovery restore where an older Vault A snapshot (counter=4, Active, rev=2)
+        // is reconciled with protected recovery evidence showing counter=10 was already consumed (I11).
+        let stale_snapshot = VaultABandBackupSnapshot {
+            blind_patient_id: blind_id.clone(),
+            tag_uid,
+            snapshot_band_status: BandStatus::Active,
+            snapshot_high_water_counter: 4,
+            snapshot_revocation_version: enrollment.revocation_version(),
+            backup_captured_at_unix: 1_700_090_000,
+        };
+        let protected_evidence = ProtectedRecoveryEvidence {
+            blind_patient_id: blind_id.clone(),
+            tag_uid,
+            observed_high_water_counter: 10,
+            latest_known_band_status: BandStatus::Active,
+            observed_revocation_version: enrollment.revocation_version(),
+            evidence_verified: true,
+        };
+        let mut reconciled =
+            reconcile_band_restore(&stale_snapshot, &protected_evidence, tag_keys.clone())?;
+        assert!(!reconciled.quarantined_for_manual_verification);
+        assert_eq!(
+            reconciled.restored_band_state.durable_high_water_counter(),
+            10
+        );
+
+        // Pre-restore clinical session is immediately invalidated by the post-restore revocation version bump.
+        let post_restore_live_state = TransactionBoundaryState {
+            current_unix_secs: 1_700_100_050,
+            band_status: reconciled.restored_band_state.band_status(),
+            doctor_membership: MembershipStatus::Active,
+            doctor_credential: CredentialStatus::Approved {
+                reviewer_actor_id: "cred-reviewer-1".to_string(),
+            },
+            session_revoked: false,
+            patient_consent_withdrawn: false,
+            revocation_version: reconciled.post_restore_revocation_version,
+        };
+        assert_eq!(
+            session.revalidate_at_transaction_boundary(
+                &blind_id,
+                "hosp-manila",
+                &post_restore_live_state
+            ),
+            Err(AuthError::ClinicalSessionRevoked)
+        );
+
+        // Replaying counter 8 (above stale snapshot=4, but <= protected evidence=10) is rejected after restore.
+        let (picc_8, cmac_8) = tag_keys.seal_sun_tap_for_vector(8, prefix)?;
+        assert!(matches!(
+            reconciled.restored_band_state.verify_and_accept_tap(
+                &picc_8,
+                &cmac_8,
+                prefix,
+                "tap-replay-after-restore".to_string(),
+                "hosp-manila".to_string(),
+                doctor.actor_id.clone(),
+                1_700_100_060,
+                120,
+            ),
+            Err(NfcError::ReplayRejected {
+                incoming: 8,
+                high_water: 10
+            })
+        ));
+
+        // If recovery evidence is unverified, the restored band fails closed into Frozen.
+        let unverified_evidence = ProtectedRecoveryEvidence {
+            evidence_verified: false,
+            ..protected_evidence
+        };
+        let quarantined =
+            reconcile_band_restore(&stale_snapshot, &unverified_evidence, tag_keys)?;
+        assert!(quarantined.quarantined_for_manual_verification);
+        assert_eq!(
+            quarantined.restored_band_state.band_status(),
+            BandStatus::Frozen
+        );
 
         Ok(())
     }

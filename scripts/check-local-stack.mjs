@@ -75,8 +75,23 @@ checkContainer(
   'append_only',
 );
 
+checkContainer(
+  'Vault A high-water counter monotonic restore reconciliation', 'identity-db',
+  `PGPASSWORD="$APP_DB_PASSWORD" psql -w -v ON_ERROR_STOP=1 -h 127.0.0.1 -U identity_app -d identity_vault -c "INSERT INTO nfc_bands (tag_uid_hex, blind_patient_id, band_status, high_water_counter, resource_version, updated_at_unix) VALUES ('04112233445566', 'bp_v1_0000000000000000000000000000000000000000000000000000000000000001', 'active', 12, 1, 1700000000) ON CONFLICT (tag_uid_hex) DO UPDATE SET high_water_counter = GREATEST(nfc_bands.high_water_counter, 12)" >/dev/null && PGPASSWORD="$APP_DB_PASSWORD" psql -w -v ON_ERROR_STOP=1 -h 127.0.0.1 -U identity_app -d identity_vault -c "UPDATE nfc_bands SET high_water_counter = GREATEST(high_water_counter, 4) WHERE tag_uid_hex = '04112233445566'" >/dev/null && PGPASSWORD="$APP_DB_PASSWORD" psql -w -h 127.0.0.1 -U identity_app -d identity_vault -Atc "SELECT high_water_counter FROM nfc_bands WHERE tag_uid_hex = '04112233445566'"`,
+  '12',
+);
+
 const live = await fetch('http://127.0.0.1:8080/health/live', { signal: AbortSignal.timeout(5000) });
 if (live.status !== 204) throw new Error('API liveness check failed.');
+if (live.headers.get('cache-control') !== 'no-store, no-cache, must-revalidate') {
+  throw new Error('API security header cache-control check failed.');
+}
+if (live.headers.get('x-frame-options') !== 'DENY') {
+  throw new Error('API security header x-frame-options check failed.');
+}
+if (live.headers.get('x-content-type-options') !== 'nosniff') {
+  throw new Error('API security header x-content-type-options check failed.');
+}
 const missing = await fetch('http://127.0.0.1:8080/api/v1/fhir/Patient', { signal: AbortSignal.timeout(5000) });
 if (missing.status !== 404) throw new Error('The unfinished clinical route was unexpectedly exposed.');
-console.log('API liveness and disabled clinical route: passed');
+console.log('API liveness, security headers, and disabled clinical route: passed');

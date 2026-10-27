@@ -1,6 +1,6 @@
 # 25. Availability, disaster recovery, and hospital downtime
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress; `backend/src/recovery.rs` implements coordinated backup/restore reconciliation (`reconcile_band_restore`) ensuring restored Vault A snapshots never roll back NFC `high_water_counter` below protected recovery evidence, resurrect `Frozen`/`Retired` bands, or keep pre-restore clinical sessions active (`post_restore_revocation_version` bump), and `scripts/check-local-stack.mjs` verifies monotonic counter reconciliation in `identity_vault`. Hospital RTO/RPO sign-off and live downtime drills remain open.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I11
 

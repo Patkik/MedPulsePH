@@ -1,6 +1,6 @@
 # 29. Readiness checklist and unresolved decisions
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress; engineering contracts, split-vault schemas, cryptographic envelopes, NTAG 424 DNA SUN verification, enrollment/pairing state machines, clinical encounter lifecycles, browser/API hardening, scoped FHIR R4 boundary assembly, and coordinated restore reconciliation are implemented and verified on synthetic fixtures (`I01`–`I12`). Live-patient readiness remains gated on external hospital clinical, privacy, procurement, and physical hardware sign-off.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I12
 

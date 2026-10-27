@@ -1,6 +1,6 @@
 # 26. Deployment, supply chain, migrations, and support operations
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress; local Docker isolation (`compose.yaml`), separate database owner vs. runtime credentials (`identity_owner`/`identity_app`, `clinical_owner`/`clinical_app`), non-root API container execution (`backend/Dockerfile`), and locked dependency manifests (`Cargo.lock`, `app/package-lock.json`) are enforced. Open supply-chain item: Expo CLI transitive `zod` advisory (`GHSA-mrhx-c7xc-m3w5`) tracked in `docs/implementation/I03-PREVIEW-EVIDENCE.md`.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I11
 
