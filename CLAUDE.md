@@ -6,7 +6,7 @@ A high-security healthcare wristband platform built in Rust. Physical 13.56 MHz 
 ## Tech Stack
 - **Backend:** Rust (Edition 2024), `axum`, `tokio`, `sqlx` (PostgreSQL), `redis`
 - **Cryptography:** `aes-gcm` (AES-256-GCM vault cipher), `aes` + `cmac` (NTAG 424 DNA SUN verification), `argon2` (PIN hashing), `subtle` (constant-time comparisons)
-- **Frontend Portals:** React / Next.js, TypeScript, Tailwind CSS
+- **Frontend Portals:** React Native for Web, Expo, and TypeScript; PWA-first for Android, iPhone, and PC
 - **Hardware Target:** 13.56 MHz ISO/IEC 14443-A NFC (NXP NTAG 424 DNA & NTAG215)
 
 ## Non-Negotiable Security Invariants
@@ -21,3 +21,10 @@ A high-security healthcare wristband platform built in Rust. Physical 13.56 MHz 
 - Typecheck & SQLx verify: `cargo check --workspace`
 - Lint (strict): `cargo clippy --workspace -- -D warnings -D clippy::unwrap_used`
 - Run crypto & handshake tests: `cargo test --workspace`
+
+## Skill and specification alignment
+- Before changing a feature, read the applicable workspace skills and implementation specifications.
+- When behavior, permissions, security boundaries, platform support, or acceptance criteria change, update the affected specifications and the relevant sections of the workspace skills in the same change. Keep corresponding `.agents/skills` and `.claude/skills` copies synchronized.
+- Do not weaken the security invariants above by rewriting a skill. Resolve conflicting instructions before implementing the affected behavior.
+- Record verification and outstanding limitations; do not describe planned or preview-only capabilities as implemented.
+- Run `node scripts/check-skill-sync.mjs` to check mirrored instruction files. This structural check does not replace review of whether a skill accurately reflects the implementation.

@@ -1,12 +1,12 @@
 # 14. Skill alignment and change governance
 
-**Status:** Planning requirements; implementation not started.
+**Status:** The instruction rule and mirrored-file check are in place. Semantic alignment remains a review responsibility; the remaining skill revisions below are not complete.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I04
 
 ---
 
-**Proposed rule; not yet installed or enforced:**
+**Workspace rule:**
 
 1. Before changing a feature, identify and read the workspace skills governing its UI, permissions, data access, security, interoperability, hardware, and deployment.
 2. Treat approved product decisions and project security invariants as constraints. A skill cannot silently override them.
@@ -16,14 +16,14 @@
 6. Make narrow revisions. Unrelated wording or styling changes do not require rewriting unrelated skills.
 7. Before acceptance, verify synchronization, relevant denial cases, and agreement with the documented workflow. Automated checks can detect structural drift; reviewers must assess semantic consistency.
 
-Use `.agents/skills` as the proposed maintained workspace source, with `.claude/skills` synchronized copies. Update `AGENTS.md` and `CLAUDE.md` when implementing this rule; a statement in this plan does not itself enforce it.
+`AGENTS.md` and `CLAUDE.md` contain the rule. Run `node scripts/check-skill-sync.mjs` to detect mismatched skill copies and project instruction files. This check cannot determine whether a skill semantically matches a feature or whether a required skill was updated; reviewers must verify those points.
 
 Known alignment work before dependent implementation:
 
 | Reference | Required change |
 | --- | --- |
-| `AGENTS.md` and `CLAUDE.md` | Record the PWA-first direction, role boundaries, and skill alignment rule. |
-| Frontend skill | Add hospital context, approved workflows, accessibility, and clinical states. |
+| `AGENTS.md` and `CLAUDE.md` | PWA-first direction and skill-alignment rule recorded; detailed role boundaries remain in the implementation specifications. |
+| Frontend skill | Hospital context and preview limitations recorded; update with approved workflows as they are implemented. |
 | Split-vault skill | Define RBAC conditions, capability expiry/revocation, and narrowly scoped internal processing. |
 | FHIR skill | Remove its extra public chronic-alert field and align resource permissions/profiles with the project invariant. |
 | NFC skill | Add durable replay recovery, ingestion/retry behavior, PWA limitations, and complete NDEF byte budgeting. |

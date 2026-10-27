@@ -69,3 +69,9 @@ Use active voice as default. A CTA says exactly what happens when it is used: "S
 Treat failure and emptiness as moments for direction, not mood. Explain what went wrong and how to fix it, in the interface's voice rather than a person's. Errors don't apologize, and they are never vague about what happened. An empty screen is an invitation to act.
 
 Keep the tone conversational: plain verbs, sentence case, no filler, with tone matched to the brand and the audience. Let each written element do exactly one job.
+
+## MedPulsePH project context
+
+Use `docs/implementation/03-users-and-workspaces.md`, `04-roles-and-permissions.md`, `12-ui-design-and-resilience.md`, and `28-screen-and-api-specifications.md` for hospital roles, accessibility, and screen states. The selected direction is calm, clear, and reassuring across mobile and desktop.
+
+The current `app/` is a synthetic-data preview. Role selection changes displayed examples only: it is not authentication or authorization. Do not imply clinical records, patient consent, NFC verification, or real-patient readiness until those capabilities are implemented and verified server-side. Update this section and its `.claude` mirror when these behaviors change.
