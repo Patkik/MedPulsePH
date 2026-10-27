@@ -21,3 +21,7 @@ allowed-tools: Read Edit Grep Glob Bash(cargo check*) Bash(cargo clippy*)
 ## 3. Field-Level Encryption & Audit Logging
 - Encrypt clinical notes and diagnoses in memory using `aes_gcm::Aes256Gcm` with a unique 96-bit nonce per record before inserting into Vault B.
 - Every Tier-2 read or write MUST append an entry to `immutable_audit_logs` containing `blind_patient_id`, `doctor_id`, `clinic_id`, `action_type`, `ip_address`, and `timestamp`.
+
+## Local Docker development
+
+The local-only Compose stack uses separate PostgreSQL containers, networks, credentials, and volumes for identity and clinical data. Runtime accounts are distinct from bootstrap owners. `IdentityPool` and `ClinicalPool` are separate Rust types. The early API only connects the pools and exposes process liveness; it has no clinical queries or authenticated routes. Do not treat this setup, its plaintext local transport, or its local environment credentials as production security. Never load real patient data into this development stack.

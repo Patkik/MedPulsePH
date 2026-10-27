@@ -1,0 +1,87 @@
+name: medpulse-local
+
+services:
+  identity-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: identity_vault
+      POSTGRES_USER: identity_owner
+      POSTGRES_PASSWORD: ${IDENTITY_OWNER_PASSWORD:?Run node scripts/setup-local-env.mjs first}
+      APP_DB_USER: identity_app
+      APP_DB_PASSWORD: ${IDENTITY_APP_PASSWORD:?Run node scripts/setup-local-env.mjs first}
+    volumes:
+      - identity-data:/var/lib/postgresql/data
+      - ./docker/postgres/init-app-user.sh:/docker-entrypoint-initdb.d/init-app-user.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=$${APP_DB_PASSWORD} psql -w -h 127.0.0.1 -U identity_app -d identity_vault -tAc 'SELECT 1' | grep -qx 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    networks: [identity]
+
+  clinical-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: clinical_vault
+      POSTGRES_USER: clinical_owner
+      POSTGRES_PASSWORD: ${CLINICAL_OWNER_PASSWORD:?Run node scripts/setup-local-env.mjs first}
+      APP_DB_USER: clinical_app
+      APP_DB_PASSWORD: ${CLINICAL_APP_PASSWORD:?Run node scripts/setup-local-env.mjs first}
+    volumes:
+      - clinical-data:/var/lib/postgresql/data
+      - ./docker/postgres/init-app-user.sh:/docker-entrypoint-initdb.d/init-app-user.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=$${APP_DB_PASSWORD} psql -w -h 127.0.0.1 -U clinical_app -d clinical_vault -tAc 'SELECT 1' | grep -qx 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    networks: [clinical]
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    networks: [cache]
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      IDENTITY_DATABASE_URL: postgres://identity_app:${IDENTITY_APP_PASSWORD}@identity-db:5432/identity_vault
+      CLINICAL_DATABASE_URL: postgres://clinical_app:${CLINICAL_APP_PASSWORD}@clinical-db:5432/clinical_vault
+    depends_on:
+      identity-db: { condition: service_healthy }
+      clinical-db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks: [edge, identity, clinical, cache]
+
+  tools:
+    profiles: [tools]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: tools
+    entrypoint: ["cargo"]
+    network_mode: none
+    volumes:
+      - rust-target:/workspace/target
+
+volumes:
+  identity-data:
+  clinical-data:
+  rust-target:
+
+networks:
+  edge: {}
+  identity: { internal: true }
+  clinical: { internal: true }
+  cache: { internal: true }

@@ -1,0 +1,10 @@
+.git
+.agents
+.claude
+app
+docs
+target
+node_modules
+.env
+.env.*
+.mcp.json

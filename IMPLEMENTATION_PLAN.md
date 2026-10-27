@@ -1,6 +1,6 @@
 # MedPulsePH implementation plan
 
-**Status:** The pilot-boundary draft and an early synthetic-data interface preview are in progress. Authentication, clinical/NFC functionality, and production security controls have not been implemented. The skill-alignment instruction and mirror check are installed; semantic alignment still requires review.
+**Status:** The pilot-boundary draft, synthetic-data interface preview, and local Docker/database foundation are in progress. The Rust API exposes only liveness. Authentication, clinical/NFC functionality, and production security controls have not been implemented. The skill-alignment instruction and mirror check are installed; semantic alignment still requires review.
 
 **Product direction:** An installable PWA for Android, iPhone, and PC using React Native for Web and a Rust backend. The interface should feel calm, clear, and reassuring. Native apps and a reader companion remain later capabilities where browsers are insufficient.
 

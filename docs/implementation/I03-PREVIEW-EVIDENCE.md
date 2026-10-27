@@ -12,7 +12,7 @@
 
 ## Open items
 
-- The current workstation has no Rust toolchain; no Rust backend has been built or checked.
+- The current workstation has no host Rust toolchain. The separate I04 Docker setup now provides a health-only Rust API and containerized checks; it does not provide clinical or authentication functionality.
 - The npm audit reports [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) through Expo CLI's transitive `zod` dependency. The suggested automatic remediation changes Expo's major version; a compatible, verified fix remains open.
 - Browser inspection covered one desktop view and the Doctor selection. Mobile viewport, screen readers, keyboard interaction, and other target devices have not yet been verified.
 - The SVG icon and rendered clasp are provisional; the required multi-scale, grid, and physical logo reviews remain open.
