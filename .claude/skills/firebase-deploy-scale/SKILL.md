@@ -1,36 +1,32 @@
 ---
 name: firebase-deploy-scale
-description: Architect, configure, and deploy the MedBand-Rust NFC platform on Firebase and Google Cloud Run for high availability and horizontal scalability. Use whenever configuring firebase.json, Firestore named databases (Vault A & Vault B), Firestore/RTDB security rules, Cloud Run containerization for Rust Axum, or Next.js Firebase App Hosting.
+description: Architect, configure, and deploy the MedPulsePH PWA and Rust Axum backend with PostgreSQL split-vault isolation, Redis coordination, and cloud hosting. Use whenever configuring deployment files, containerization, hosting rewrites, or operational scaling and recovery checks.
 allowed-tools: Read Edit Grep Glob Bash(firebase *) Bash(gcloud *) Bash(docker *) Bash(cargo build*)
 ---
 
-# Firebase Deployment & High-Scale Architecture Skill
+# Deployment, Hosting & Operational Scaling Skill
 
-## 1. Firebase Split-Vault Isolation (Vault A vs. Vault B)
-- **Named Firestore Databases:** Use Firestore multi-database isolation within the project:
-  - **Vault A (`vault-a-identity`):** Stores `patient_pii`, `nfc_tags`, `band_status`, and `argon2_pin_hash`.
-  - **Vault B (`vault-b-clinical`):** Stores `encounters`, `allergies`, `prescriptions`, `lab_results`, and `immutable_audit_logs` keyed ONLY by `blind_patient_id` (HMAC-SHA256 UUID).
-- **Zero Direct Client Access (`firestore.rules`):**
-  - Lock down both vaults to public/client SDKs (`allow read, write: if false;`).
-  - All reads and writes MUST flow through the Rust `axum` backend using least-privilege Google Cloud IAM service accounts (`IdentityVaultServiceAccount` vs `ClinicalVaultServiceAccount`).
-- **Immutable Audit Logs:** Enforce append-only semantics on `immutable_audit_logs` (deny `update` and `delete` operations at the rule and IAM level).
+## 1. PostgreSQL Split-Vault Isolation (Not Firestore)
+- **Authoritative Data Stores:** In accordance with project security invariant #3 (`AGENTS.md`), Vault A (`IdentityPool`) and Vault B (`ClinicalPool`) MUST use separate **PostgreSQL** databases (`sqlx`), distinct credentials, isolated network paths, and independent backup access—never Cloud Firestore or Firebase Realtime Database for vault or replay authority.
+- **Role Separation:** Separate runtime, migration, audit-writing, backup, and deployment database identities (`docs/implementation/21-cryptography-and-key-operations.md`, `26-deployment-and-supply-chain.md`). Runtime accounts (`identity_app`, `clinical_app`) must never hold superuser, schema-DDL, or audit-truncation privileges.
+- **No Direct Client Database Access:** Browser/PWA clients never connect directly to PostgreSQL or Redis; all requests pass through the Rust `axum` API.
 
-## 2. Scalable Anti-Replay NFC Counter (Sub-10ms Atomic Transactions)
-- Store NFC tap counters in **Firebase Realtime Database (RTDB)** at `/nfc_counters/{tag_uid_hex}` or a dedicated Firestore collection using atomic transactions.
-- **Strict Monotonicity:** Inside a transaction, read `stored_counter`, verify `incoming_counter > stored_counter`, and write `incoming_counter`. Abort immediately if `incoming_counter <= stored_counter` to block cloned URL replay attacks across distributed instances.
+## 2. Durable Replay Authority vs. Redis Coordination
+- **Vault A Durable Authority:** NFC tap counter advancement and accepted-proof tap contexts are committed durably in **Vault A PostgreSQL** (`docs/implementation/08-replay-and-clinical-authorization.md`, `20-state-machines-and-consistency.md`).
+- **Redis Role:** Redis is used only for short-lived coordination, rate limiting, and fast-path caching with explicit invalidation. An evicted or restarted Redis instance must never permit a previously consumed NFC counter to be accepted again.
 
-## 3. Cloud Run + Firebase Hosting Rewrite Architecture
-- **Stateless Rust Container (`Dockerfile`):**
-  - Use a multi-stage Rust build (`cargo build --release`) targeting a minimal `gcr.io/distroless/cc-debian12` runtime image.
-  - Keep the Rust `axum` service completely stateless so any Cloud Run instance can verify an NFC tap or clinic session.
-- **Zero Cold-Start for Emergency Triage:**
-  - Configure Cloud Run with `min-instances = 1` (minimum) and `--cpu-boost` so Tier-1 emergency taps (`GET /v1/tap` and `/api/v1/emergency/*`) respond in <100ms 24/7.
-  - Set Cloud Run concurrency (`--concurrency 250`) to leverage `tokio` async I/O on each instance before horizontally scaling out.
-- **Unified Routing (`firebase.json`):**
-  - Route `/v1/tap/**` and `/api/**` to the `medband-rust-api` Cloud Run service.
-  - Deploy the React / Next.js Doctor & Patient portals via **Firebase App Hosting** or **Firebase Hosting** global CDN with strict `Strict-Transport-Security` and `Content-Security-Policy` headers.
+## 3. Container, PWA Hosting & Edge Routing
+- **Stateless Rust Container (`backend/Dockerfile`):**
+  - Build reproducibly with `--locked` dependencies and run as a non-root user (`medpulse`) with read-only root filesystem and dropped Linux capabilities.
+  - Keep the Rust `axum` API stateless so horizontal instances do not rely on local in-memory session or replay state.
+- **PWA & Static Asset Hosting:**
+  - Serve the Expo / React Native for Web PWA over HTTPS with strict `Strict-Transport-Security`, `Content-Security-Policy`, framing protections, and `Cache-Control: no-store` on authentication, tap, and clinical responses (`docs/implementation/22-pwa-api-and-abuse-security.md`).
+  - If Firebase Hosting or Cloud Run rewrites are used for the web frontend and API ingress, treat them strictly as static asset delivery and HTTPS reverse-proxy routing—not as a replacement for PostgreSQL Vault A/B.
+  - Exclude clinical and authentication responses from service-worker caches.
 
-## 4. Deployment & Verification Checklist
-1. Validate `firebase.json`, `firestore.rules`, and `database.rules.json` before deploying.
-2. Verify no secrets (AES master keys, HMAC peppers, Service Account JSONs) are baked into the Docker image or frontend bundle—inject all cryptographic keys via **Google Cloud Secret Manager** mounted into Cloud Run.
-3. Run `cargo clippy --workspace -- -D warnings -D clippy::unwrap_used` and `cargo test --workspace` prior to building the release container.
+## 4. Measured Targets, Recovery & Supply-Chain Verification
+- **No Unverified Latency or SLA Claims:** Do not claim guaranteed `<100ms 24/7` response times or production readiness from configuration flags (such as `min-instances`) alone. Treat latency, concurrency, and cold-start figures as engineering targets that require load testing, abuse testing, and hospital acceptance evidence (`docs/implementation/25-availability-and-disaster-recovery.md`, `29-readiness-and-open-decisions.md`).
+- **Coordinated Restore Safety:** Rehearse backup restoration across Vault A, Vault B, and key versions so restored backups never resurrect revoked sessions, unfrozen bands, or lower NFC tap counters.
+- **Pre-Release Checks:**
+  1. Ensure no secrets, master keys, HMAC peppers, or clinical datasets exist in source control, frontend bundles, or container layers.
+  2. Run `cargo check --workspace --locked`, `cargo clippy --workspace --locked -- -D warnings -D clippy::unwrap_used`, and `cargo test --workspace --locked`.

@@ -69,3 +69,12 @@ When building the chosen mark (or comparing the 3 candidates visually):
      4. **Construction Grid Overlay** (showing the underlying geometric ratios and negative-space channels)
      5. **Physical Surface Mock** (e.g., embossed/laser-engraved on a matte 13.56 MHz NFC wristband strap or clinical badge)
 3. **The Subtraction Check:** Inspect the rendered mark and ask: *"Can I remove one line, curve, or detail without losing the identity?"* If yes, remove it.
+
+---
+
+## 4. MedPulsePH Project Identity Context
+- **Brief & Candidate Directions (`docs/implementation/13-logo-and-identity.md`):**
+  - Working name: **MedPulsePH**, with `PH` kept legible inside a single-color wordmark rather than split into a separate accent badge.
+  - Primary recommended direction: **Clasp** (the geometric fastening joint of a wristband with an intentional negative-space channel on a `64×64` integer grid, `8`-unit module, and critical negative-space channels at least `8` units wide), alongside **Folded M** and **Open aperture** for comparison.
+- **Current Verification Status (`docs/implementation/I03-PREVIEW-EVIDENCE.md`):**
+  - `app/public/icon.svg` and the inline preview mark in `app/src/app/index.tsx` are provisional geometric clasp marks. Formal 3-direction comparison, `16px`/`24px` pixel checks, construction-grid overlay, subtraction review, and `8mm` physical wristband stencil verification remain required before marking I03 identity deliverables complete.

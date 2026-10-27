@@ -1,6 +1,6 @@
 # 14. Skill alignment and change governance
 
-**Status:** The instruction rule and mirrored-file check are in place. Semantic alignment remains a review responsibility; the remaining skill revisions below are not complete.
+**Status:** Baseline semantic alignment across `AGENTS.md`, `CLAUDE.md`, and all six mirrored workspace skills is in place. Ongoing semantic review remains required whenever features, security boundaries, or visual identity artifacts change.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I04
 
@@ -18,14 +18,14 @@
 
 `AGENTS.md` and `CLAUDE.md` contain the rule. Run `node scripts/check-skill-sync.mjs` to detect mismatched skill copies and project instruction files. This check cannot determine whether a skill semantically matches a feature or whether a required skill was updated; reviewers must verify those points.
 
-Known alignment work before dependent implementation:
+Baseline alignment status and ongoing maintenance:
 
-| Reference | Required change |
+| Reference | Baseline status and ongoing requirement |
 | --- | --- |
-| `AGENTS.md` and `CLAUDE.md` | PWA-first direction and skill-alignment rule recorded; detailed role boundaries remain in the implementation specifications. |
-| Frontend skill | Hospital context and preview limitations recorded; update with approved workflows as they are implemented. |
-| Split-vault skill | Define RBAC conditions, capability expiry/revocation, and narrowly scoped internal processing. |
-| FHIR skill | Remove its extra public chronic-alert field and align resource permissions/profiles with the project invariant. |
-| NFC skill | Add durable replay recovery, ingestion/retry behavior, PWA limitations, and complete NDEF byte budgeting. |
-| Deployment skill | Resolve Firestore versus required PostgreSQL. Replace guaranteed latency claims with measured targets and load tests. |
-| Logo skill | Add the selected identity and verified usage references after visual review. |
+| `AGENTS.md` and `CLAUDE.md` | Aligned: PWA-first direction, PostgreSQL split-vault invariant, and skill-alignment rule recorded; detailed role boundaries remain in the implementation specifications. |
+| Frontend skill (`frontend-design`) | Aligned: hospital context and synthetic preview limitations recorded; update as authenticated and clinical workflows are implemented. |
+| Split-vault skill (`split-vault-typestate`) | Aligned: RBAC conditions, 15-minute `VerifiedClinicSession` expiry and transaction-boundary revocation, versioned AES-256-GCM envelope with AAD, and narrowly scoped outbox/worker boundaries recorded. |
+| FHIR skill (`fhir-medical-api`) | Aligned: extra public `chronic_alerts` field removed; Tier 1 restricted to blood type, critical allergies, and ICE contact with provenance; Tier 2 boundary assembly and default-deny route posture recorded. |
+| NFC skill (`nfc-sun-crypto`) | Aligned: Vault A durable replay acceptance authority, Redis coordination role, single-consumption bound tap context, complete 256-byte NDEF budget (no silent allergy truncation), and PWA Web NFC limitations recorded. |
+| Deployment skill (`firebase-deploy-scale`) | Aligned: Firestore/RTDB replaced with required PostgreSQL split-vault and Redis coordination boundaries; unverified latency guarantees replaced with engineering targets requiring load and recovery tests. |
+| Logo skill (`anti-slop-logo`) | Aligned: MedPulsePH Clasp direction (`13-logo-and-identity.md`) and provisional status of current preview marks recorded; update after the full 5-panel visual and physical review is completed. |

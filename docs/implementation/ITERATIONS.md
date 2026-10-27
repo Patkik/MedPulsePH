@@ -2,7 +2,7 @@
 
 [Plan index](../../IMPLEMENTATION_PLAN.md)
 
-**Status:** I01 has a proposed pilot baseline, I03 has a synthetic-data design preview, and I04 has begun with skill alignment and a local Docker/database foundation. These are partial iterations; they do not implement authentication, clinical care, or production access controls and do not authorize real-patient use. Semantic skill alignment requires review.
+**Status:** I01 has a proposed pilot baseline, I03 has a synthetic-data design preview, and I04 has begun with baseline skill alignment and a local Docker/database foundation. These are partial iterations; they do not implement authentication, clinical care, or production access controls and do not authorize real-patient use. Ongoing semantic skill review remains required as features change.
 
 The 29 specifications are the requirement sources. This file describes manageable work packages and their dependencies. Each package can take several small changes; it is not a promised calendar sprint. Package numbers are stable identifiers, not a requirement to finish every package strictly in numerical order.
 
