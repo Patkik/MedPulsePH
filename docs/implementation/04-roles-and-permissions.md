@@ -1,6 +1,6 @@
 # 4. Authorization and role boundaries
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress (I02/I04 foundation). In-memory default-deny RBAC, distinct membership and credential states, self-approval rejection, Argon2id PIN verification, and the 15-minute `VerifiedClinicSession` typestate handshake are implemented in `backend/src/auth.rs` with unit tests. HTTP authentication routes, OAuth/MFA integration, and persistent staff administration remain unimplemented.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I02
 

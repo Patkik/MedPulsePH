@@ -11,9 +11,9 @@ The 29 specifications are the requirement sources. This file describes manageabl
 | Package | Focus | Prerequisites for implementation | Current state |
 | --- | --- | --- | --- |
 | I01 | Scope, risk, and hospital policy | None | In progress; pilot baseline drafted; hospital owners and approvals open |
-| I02 | Roles, accounts, and authentication | Relevant I01 identity and authorization decisions | Planned; owner unassigned |
+| I02 | Roles, accounts, and authentication | Relevant I01 identity and authorization decisions | In progress; in-memory RBAC, Argon2id PIN verifier, and 15-minute `VerifiedClinicSession` typestate contracts implemented; HTTP auth/MFA routes pending |
 | I03 | Screen flows, dashboard specifications, and brand | Relevant I01 user and scope decisions; use I02 permission contract | In progress; early role preview only |
-| I04 | Vaults, keys, state machines, and skill alignment | Relevant I01 boundaries; I02 capability contract | In progress; local Docker vaults and health-only API under verification |
+| I04 | Vaults, keys, state machines, and skill alignment | Relevant I01 boundaries; I02 capability contract | In progress; skill alignment, Docker vaults, `BlindPatientId` HMAC, versioned AES-256-GCM envelopes, and capability/idempotency contracts implemented; SQL schemas and durable replay persistence pending |
 | I05 | NFC proof and emergency access | I04 durable state and keys; I02 actor/context contracts for clinical handoff | Planned; owner unassigned |
 | I06 | Patient enrollment, bands, and workstation pairing | I02 identity; I04 state transitions; I05 verified reading | Planned; owner unassigned |
 | I07 | Administration, durable audit, and operational events | I02 permissions; I04 repositories and service capabilities | Planned; owner unassigned |

@@ -1,6 +1,6 @@
 # 21. Cryptography, database isolation, and key operations
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress (I04 foundation). Keyed HMAC-SHA256 `BlindPatientId` derivation, versioned AES-256-GCM envelopes with AAD binding `(BlindPatientId, ResourcePurpose, schema_version)`, bounded 96-bit nonce generation, and key-ring rotation/re-encryption are implemented in `backend/src/crypto.rs`. Managed KMS wrapping, persistent key rotation drills, and database role/schema migrations remain unimplemented.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I04
 
