@@ -1,6 +1,6 @@
 # 3. Users, workspaces, and information architecture
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress; `app/src/app/` implements interactive synthetic workspace routes for all `S01`–`S10` screens (`/`, `/emergency`, `/login`, `/reception`, `/patient`, `/doctor`, `/admin`) sharing `app/src/components/AppShell.tsx`. Live HTTP clinical/auth routes remain disabled (`404`).
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I03
 

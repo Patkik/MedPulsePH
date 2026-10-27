@@ -1,171 +1,336 @@
+import { Link } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { AppShell } from '../components/AppShell';
 
-type Role = 'patient' | 'doctor' | 'hospital';
+type RoleKey = 'emergency' | 'patient' | 'doctor' | 'reception' | 'admin';
 
-const roles: Record<Role, { label: string; heading: string; description: string; actions: string[] }> = {
+const ROLES: Record<
+  RoleKey,
+  {
+    label: string;
+    screenCode: string;
+    route: '/emergency' | '/patient' | '/doctor' | '/reception' | '/admin';
+    heading: string;
+    description: string;
+    capabilities: string[];
+    guardrail: string;
+  }
+> = {
+  emergency: {
+    label: 'Emergency responder',
+    screenCode: 'S01',
+    route: '/emergency',
+    heading: 'Permitted emergency summary from an active wristband tap.',
+    description:
+      'Tier-1 public access verifies the NTAG 424 DNA SUN cryptographic counter and active band status, returning only blood type, critical allergies, and ICE contact.',
+    capabilities: [
+      'Verify AES-128 PICCData counter & 8-byte truncated AES-CMAC',
+      'Display blood type, critical allergies, and ICE contact with provenance',
+      'Fallback to NDEF Record 2 offline text with staleness notice',
+    ],
+    guardrail: 'Never exposes past encounters, diagnoses, medications, or frozen bands (403).',
+  },
   patient: {
     label: 'Patient',
-    heading: 'Your health, in your hands.',
-    description: 'Manage your wristband, review requests for access, and stay informed about who has viewed your information.',
-    actions: ['Manage your wristband', 'Review access requests', 'See your access history'],
+    screenCode: 'S05',
+    route: '/patient',
+    heading: 'Your wristband, clinical consent requests, and access log.',
+    description:
+      'Freeze or unfreeze your wristband immediately, approve or decline 15-minute clinical encounter requests with your private 6-digit PIN, and inspect every recorded access.',
+    capabilities: [
+      'One-tap wristband freeze & unfreeze (invalidates active sessions)',
+      'Approve or decline 15-minute doctor requests without blame',
+      'Control cross-hospital longitudinal sharing & view immutable access history',
+    ],
+    guardrail: 'Freezing a band stops online access immediately without deleting medical records.',
   },
   doctor: {
-    label: 'Doctor',
-    heading: 'Care starts with the right context.',
-    description: 'Bring patient authorization and clinical information together in one focused encounter workspace.',
-    actions: ['Request patient authorization', 'Review a permitted chart', 'Document an encounter'],
+    label: 'Accredited doctor',
+    screenCode: 'S06–S08',
+    route: '/doctor',
+    heading: 'Care starts with verified tap proof and patient PIN approval.',
+    description:
+      'Pair a PC workstation, accept a verified NTAG 424 DNA tap, complete the patient 6-digit PIN handshake to mint a 15-minute VerifiedClinicSession, and document encounters.',
+    capabilities: [
+      'Bind short-lived PC workstation pairing challenge to verified NFC tap',
+      'Mint fixed 15-minute VerifiedClinicSession via Argon2id PIN handshake',
+      'Author Draft -> Reviewed -> Finalized -> Amended AES-256-GCM encounters',
+    ],
+    guardrail: 'Transaction boundary revalidates expiry, band status, and audit storage health on every read/write.',
   },
-  hospital: {
-    label: 'Hospital admin',
-    heading: 'A clearer view of your hospital.',
-    description: 'Manage staff access and operational activity with permissions tailored to each responsibility.',
-    actions: ['Manage staff access', 'Review credential status', 'Monitor service activity'],
+  reception: {
+    label: 'Reception & Band Officer',
+    screenCode: 'S03–S04',
+    route: '/reception',
+    heading: 'Assisted identity verification and 256-byte NTAG 424 DNA provisioning.',
+    description:
+      'Verify patient identity links with explicit evidence, hand off private PIN entry to the patient, check the 256-byte NDEF dual-record budget, and atomically replace bands.',
+    capabilities: [
+      'Advance PatientIdentityLinkState (Proposed -> EvidencePending -> Verified)',
+      'Enforce 256-byte NTAG 424 DNA NDEF budget (refusing allergy truncation)',
+      'Issue replacement wristbands and permanently retire old band UIDs',
+    ],
+    guardrail: 'Staff roles are forbidden from setting or reading a patient’s 6-digit PIN or opening clinical charts.',
+  },
+  admin: {
+    label: 'Hospital Admin & Privacy Auditor',
+    screenCode: 'S09–S10',
+    route: '/admin',
+    heading: 'Scoped governance, independent credential review, and minimized audit.',
+    description:
+      'Manage hospital memberships, require independent reviewer sign-off for clinical eligibility, and investigate minimized immutable_audit_logs projections.',
+    capabilities: [
+      'Block self-approval of clinical credentials (AuthError::SelfApprovalForbidden)',
+      'Suspend clinician membership and increment revocation version immediately',
+      'Inspect MinimizedAuditEventProjection without clinical note plaintexts',
+    ],
+    guardrail: 'Administrators and privacy auditors never receive decrypted Vault B clinical notes.',
   },
 };
 
-function Brand() {
-  return (
-    <View style={styles.brand} accessibilityLabel="MedPulsePH">
-      <View style={styles.brandMark} accessible={false}>
-        <View style={styles.markLeft} />
-        <View style={styles.markRight} />
-      </View>
-      <Text style={styles.brandName}>MedPulsePH</Text>
-    </View>
-  );
-}
+const ALL_PAGES: {
+  code: string;
+  title: string;
+  route: '/emergency' | '/login' | '/reception' | '/patient' | '/doctor' | '/admin';
+  summary: string;
+}[] = [
+  {
+    code: 'S01',
+    title: 'Emergency responder triage view',
+    route: '/emergency',
+    summary: 'Verified NTAG 424 DNA tap, frozen-band 403 lock, replay rejection, and offline NDEF Record 2 fallback.',
+  },
+  {
+    code: 'S02',
+    title: 'Staff sign-in, MFA & hospital switcher',
+    route: '/login',
+    summary: 'Hospital scope isolation, MFA enforcement, role boundary preview, and disabled care-team gate.',
+  },
+  {
+    code: 'S03 & S04',
+    title: 'Reception enrollment & Band Officer NDEF budget',
+    route: '/reception',
+    summary: 'Identity link verification, private PIN keypad boundary, 256-byte NDEF calculator, and band replacement.',
+  },
+  {
+    code: 'S05',
+    title: 'Patient wristband, consent & access history',
+    route: '/patient',
+    summary: 'One-tap band freeze, 15-minute PIN request approval/decline, cross-hospital sharing, and audit log.',
+  },
+  {
+    code: 'S06–S08',
+    title: 'Doctor pairing, PIN handshake & clinical encounter',
+    route: '/doctor',
+    summary: 'Workstation pairing, 6-digit PIN handshake, 15:00 countdown, Draft -> Finalized -> Amended revisions, and fault checks.',
+  },
+  {
+    code: 'S09 & S10',
+    title: 'Hospital Admin, Credential Review & Privacy Audit',
+    route: '/admin',
+    summary: 'Self-approval block, clinician suspension, minimized privacy auditor projection, and bulk-export denial.',
+  },
+];
 
 export default function HomeScreen() {
-  const [role, setRole] = useState<Role>('patient');
+  const [role, setRole] = useState<RoleKey>('patient');
   const { width } = useWindowDimensions();
-  const compact = width > 0 && width < 820;
-  const selected = roles[role];
+  const compact = width > 0 && width < 860;
+  const selected = ROLES[role];
 
   return (
-    <ScrollView style={styles.page} contentContainerStyle={styles.pageContent}>
-      <View style={[styles.shell, compact && styles.shellCompact]}>
-        <View style={[styles.header, compact && styles.headerCompact]}>
-          <Brand />
-          <View style={styles.headerMeta}>
-            <View style={styles.previewDot} />
-            <Text style={styles.previewLabel}>DESIGN PREVIEW</Text>
-          </View>
-        </View>
-
-        <View style={styles.notice} accessibilityRole="alert">
-          <Text style={styles.noticeTitle}>A preview with no patient data</Text>
-          <Text style={styles.noticeText}>Sign-in, wristband scanning, and clinical records are not connected yet.</Text>
-        </View>
-
-        <View style={[styles.main, compact && styles.mainCompact]}>
-          <View style={[styles.intro, compact && styles.introCompact]}>
-            <Text style={styles.eyebrow}>CARE, CONNECTED</Text>
-            <Text accessibilityRole="header" style={[styles.hero, compact && styles.heroCompact]}>{selected.heading}</Text>
-            <Text style={styles.description}>{selected.description}</Text>
-
-            <Text style={styles.selectorLabel}>Explore the experience for</Text>
-            <View style={styles.roleGroup} accessibilityLabel="Preview a role">
-              {(Object.keys(roles) as Role[]).map((item) => (
+    <AppShell
+      screenCode="S01–S10 · Interactive Workspace Hub"
+      title={selected.heading}
+      subtitle={selected.description}
+      roleBadge={`Selected lens: ${selected.label} (${selected.screenCode})`}
+    >
+      <View style={[styles.mainRow, compact && styles.mainRowCompact]}>
+        <View style={styles.leftCol}>
+          <Text style={styles.sectionTitle}>Select a role lens</Text>
+          <View style={styles.roleGroup} accessibilityLabel="Select a role lens">
+            {(Object.keys(ROLES) as RoleKey[]).map((key) => {
+              const active = role === key;
+              return (
                 <Pressable
-                  key={item}
+                  key={key}
                   accessibilityRole="button"
-                  accessibilityState={{ selected: role === item }}
-                  onPress={() => setRole(item)}
-                  style={({ pressed }) => [styles.roleButton, role === item && styles.roleButtonActive, pressed && styles.pressed]}
+                  accessibilityState={{ selected: active }}
+                  onPress={() => setRole(key)}
+                  style={[styles.roleButton, active && styles.roleButtonActive]}
                 >
-                  <Text style={[styles.roleButtonText, role === item && styles.roleButtonTextActive]}>{roles[item].label}</Text>
+                  <Text style={[styles.roleButtonText, active && styles.roleButtonTextActive]}>
+                    {ROLES[key].label}
+                  </Text>
                 </Pressable>
-              ))}
-            </View>
-            <Text style={styles.selectorHint}>Choose a role to see its planned workspace.</Text>
+              );
+            })}
           </View>
 
-          <View style={[styles.panel, compact && styles.panelCompact]}>
-            <View style={styles.panelTop}>
-              <View style={styles.panelTitleGroup}>
-                <Text style={styles.panelKicker}>WORKSPACE PREVIEW</Text>
-                <Text style={styles.panelTitle}>{selected.label}</Text>
-              </View>
-              <View style={styles.panelBadge}><Text style={styles.panelBadgeText}>COMING SOON</Text></View>
+          <View style={styles.guardrailBox}>
+            <Text style={styles.guardrailTitle}>Enforced security boundary ({selected.screenCode})</Text>
+            <Text style={styles.guardrailBody}>{selected.guardrail}</Text>
+          </View>
+        </View>
+
+        <View style={styles.panel}>
+          <View style={styles.panelTop}>
+            <View style={styles.panelTitleWrap}>
+              <Text style={styles.panelCode}> Screen {selected.screenCode}</Text>
+              <Text style={styles.panelTitle}>{selected.label}</Text>
             </View>
-            <Text style={styles.panelIntro}>Designed around the things that matter most.</Text>
-            {selected.actions.map((action, index) => (
-              <View key={action} style={styles.actionRow}>
-                <Text style={styles.actionNumber}>0{index + 1}</Text>
-                <Text style={styles.actionText}>{action}</Text>
-                <Text style={styles.actionStatus}>Planned</Text>
+            <Link href={selected.route} asChild>
+              <Pressable accessibilityRole="link" style={styles.openBtn}>
+                <Text style={styles.openBtnText}>Open interactive page</Text>
+              </Pressable>
+            </Link>
+          </View>
+
+          <View style={styles.capList}>
+            {selected.capabilities.map((cap) => (
+              <View key={cap} style={styles.capRow}>
+                <View style={styles.capDot} />
+                <Text style={styles.capText}>{cap}</Text>
               </View>
             ))}
-            <View style={styles.panelFooter}>
-              <Text style={styles.panelFooterTitle}>Privacy is part of the design.</Text>
-              <Text style={styles.panelFooterText}>Access to clinical records will require an authorized clinician and patient approval.</Text>
-            </View>
           </View>
         </View>
+      </View>
 
-        <View style={[styles.footer, compact && styles.footerCompact]}>
-          <Text style={styles.footerBrand}>MedPulsePH</Text>
-          <Text style={styles.footerText}>A more thoughtful way to connect care.</Text>
-          <Text style={styles.footerText}>Built for people, with privacy in mind.</Text>
+      <View style={styles.catalogSection}>
+        <Text style={styles.sectionTitle}>All interactive pages (S01–S10 screen catalog)</Text>
+        <View style={[styles.catalogGrid, compact && styles.catalogGridCompact]}>
+          {ALL_PAGES.map((page) => (
+            <View key={page.code} style={styles.catalogCard}>
+              <View style={styles.catalogTop}>
+                <Text style={styles.catalogCode}>{page.code}</Text>
+                <Link href={page.route} asChild>
+                  <Pressable accessibilityRole="link" style={styles.catalogLinkBtn}>
+                    <Text style={styles.catalogLinkText}>Open {page.route}</Text>
+                  </Pressable>
+                </Link>
+              </View>
+              <Text style={styles.catalogCardTitle}>{page.title}</Text>
+              <Text style={styles.catalogCardBody}>{page.summary}</Text>
+            </View>
+          ))}
         </View>
       </View>
-    </ScrollView>
+    </AppShell>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: '#F3F7F5' },
-  pageContent: { flexGrow: 1 },
-  shell: { width: '100%', maxWidth: 1228, alignSelf: 'center', paddingHorizontal: 24, flex: 1 },
-  shellCompact: { paddingHorizontal: 16 },
-  header: { width: '100%', height: 96, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  headerCompact: { height: 72 },
-  brand: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
-  brandMark: { width: 32, height: 32, flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 },
-  markLeft: { width: 14, height: 22, borderWidth: 4, borderColor: '#1B5146', borderRightWidth: 0, borderTopLeftRadius: 5, borderBottomLeftRadius: 5 },
-  markRight: { width: 14, height: 14, borderWidth: 4, borderColor: '#1B5146', borderLeftWidth: 0, borderTopRightRadius: 5, borderBottomRightRadius: 5 },
-  brandName: { color: '#173B33', fontSize: 21, fontWeight: '700', letterSpacing: -0.7 },
-  headerMeta: { flexDirection: 'row', alignItems: 'center', gap: 7, flexShrink: 0 },
-  previewDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#7AA78E' },
-  previewLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.1, color: '#687F75' },
-  notice: { width: '100%', backgroundColor: '#E5EEE8', borderRadius: 10, paddingHorizontal: 18, paddingVertical: 12, gap: 3 },
-  noticeTitle: { color: '#244E3E', fontSize: 13, fontWeight: '700' },
-  noticeText: { color: '#496B5C', fontSize: 13, lineHeight: 19 },
-  main: { width: '100%', flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 56, paddingVertical: 72 },
-  mainCompact: { flexDirection: 'column', alignItems: 'stretch', gap: 32, paddingVertical: 36 },
-  intro: { flex: 1, minWidth: 0, maxWidth: 560 },
-  introCompact: { maxWidth: '100%' },
-  eyebrow: { fontSize: 11, fontWeight: '700', letterSpacing: 1.8, color: '#628274', marginBottom: 16 },
-  hero: { fontSize: 52, lineHeight: 58, letterSpacing: -1.8, fontWeight: '700', color: '#173B33', maxWidth: 540 },
-  heroCompact: { fontSize: 34, lineHeight: 40, letterSpacing: -1.1 },
-  description: { fontSize: 17, lineHeight: 27, color: '#557267', maxWidth: 490, marginTop: 18 },
-  selectorLabel: { fontSize: 14, color: '#294D40', fontWeight: '700', marginTop: 32, marginBottom: 12 },
+  mainRow: { flexDirection: 'row', alignItems: 'stretch', gap: 18 },
+  mainRowCompact: { flexDirection: 'column' },
+  leftCol: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#C7D5D0',
+    padding: 20,
+    gap: 14,
+  },
+  sectionTitle: { color: '#15362F', fontSize: 17, fontWeight: '700' },
   roleGroup: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  roleButton: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: '#C8D8D0', backgroundColor: '#F8FBF9', minHeight: 44, justifyContent: 'center' },
-  roleButtonActive: { backgroundColor: '#245A49', borderColor: '#245A49' },
-  roleButtonText: { fontSize: 13, color: '#385E50', fontWeight: '600' },
+  roleButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#C7D5D0',
+    backgroundColor: '#F5F8F7',
+    minHeight: 42,
+    justifyContent: 'center',
+  },
+  roleButtonActive: { backgroundColor: '#176856', borderColor: '#176856' },
+  roleButtonText: { color: '#15362F', fontSize: 13, fontWeight: '600' },
   roleButtonTextActive: { color: '#FFFFFF' },
-  pressed: { opacity: 0.75 },
-  selectorHint: { color: '#789084', fontSize: 12, marginTop: 12 },
-  panel: { flex: 1, minWidth: 0, width: '100%', maxWidth: 480, borderRadius: 16, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DDE8E1', padding: 24 },
-  panelCompact: { maxWidth: '100%', padding: 20 },
-  panelTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 },
-  panelTitleGroup: { flex: 1, minWidth: 0 },
-  panelKicker: { color: '#849A8E', fontSize: 10, letterSpacing: 1.2, fontWeight: '700', marginBottom: 8 },
-  panelTitle: { color: '#244A3D', fontSize: 23, fontWeight: '700', letterSpacing: -0.6 },
-  panelBadge: { borderRadius: 20, backgroundColor: '#EDF4EF', paddingHorizontal: 10, paddingVertical: 7, flexShrink: 0 },
-  panelBadgeText: { fontSize: 9, color: '#658676', fontWeight: '700', letterSpacing: 0.6 },
-  panelIntro: { color: '#71897D', fontSize: 13, lineHeight: 20, marginTop: 13, marginBottom: 20 },
-  actionRow: { minHeight: 58, borderTopWidth: 1, borderTopColor: '#EDF1EE', flexDirection: 'row', alignItems: 'center', gap: 12 },
-  actionNumber: { color: '#9AAEA2', fontSize: 11, fontWeight: '700' },
-  actionText: { flex: 1, minWidth: 0, color: '#35594A', fontSize: 14, fontWeight: '600' },
-  actionStatus: { color: '#859B8E', fontSize: 12, flexShrink: 0 },
-  panelFooter: { backgroundColor: '#F1F6F2', borderRadius: 10, padding: 16, marginTop: 16, gap: 6 },
-  panelFooterTitle: { color: '#315A48', fontSize: 13, fontWeight: '700' },
-  panelFooterText: { color: '#6D897B', fontSize: 12, lineHeight: 19 },
-  footer: { width: '100%', paddingVertical: 28, borderTopWidth: 1, borderTopColor: '#DEE9E2', flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
-  footerCompact: { flexDirection: 'column', gap: 6 },
-  footerBrand: { color: '#315749', fontSize: 12, fontWeight: '700' },
-  footerText: { color: '#849A8E', fontSize: 12 },
+  guardrailBox: {
+    backgroundColor: '#E7EFEA',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#8AB5A5',
+    padding: 14,
+    gap: 4,
+    marginTop: 4,
+  },
+  guardrailTitle: { color: '#15362F', fontSize: 13, fontWeight: '700' },
+  guardrailBody: { color: '#15362F', fontSize: 13, lineHeight: 19 },
+  panel: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#C7D5D0',
+    padding: 20,
+    gap: 14,
+  },
+  panelTop: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
+  },
+  panelTitleWrap: { flex: 1, minWidth: 180, gap: 2 },
+  panelCode: { color: '#4A675D', fontSize: 12, fontWeight: '700' },
+  panelTitle: { color: '#15362F', fontSize: 22, fontWeight: '700', letterSpacing: -0.5 },
+  openBtn: {
+    backgroundColor: '#15362F',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  openBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  capList: { gap: 10, paddingTop: 4 },
+  capRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E7EFEA',
+  },
+  capDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#176856' },
+  capText: { flex: 1, color: '#15362F', fontSize: 13, lineHeight: 19, fontWeight: '600' },
+  catalogSection: { gap: 12 },
+  catalogGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
+  catalogGridCompact: { flexDirection: 'column' },
+  catalogCard: {
+    flex: 1,
+    minWidth: 320,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#C7D5D0',
+    padding: 18,
+    gap: 8,
+  },
+  catalogTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  catalogCode: {
+    backgroundColor: '#E7EFEA',
+    color: '#15362F',
+    fontSize: 12,
+    fontWeight: '700',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  catalogLinkBtn: {
+    backgroundColor: '#176856',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 6,
+  },
+  catalogLinkText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+  catalogCardTitle: { color: '#15362F', fontSize: 16, fontWeight: '700' },
+  catalogCardBody: { color: '#4A675D', fontSize: 13, lineHeight: 19 },
 });
