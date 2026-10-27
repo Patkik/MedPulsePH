@@ -1,6 +1,6 @@
 # 24. Audit behavior, operational observability, and incident response
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress; `backend/src/encounter.rs` enforces fail-closed clinical reads and writes when durable audit storage is unavailable (`AuditStorageHealth::Outage`) and provides minimized privacy auditor projections (`MinimizedAuditEventProjection`) omitting clinical payloads. Hospital incident ownership and breach-reporting sign-off remain open.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I07
 

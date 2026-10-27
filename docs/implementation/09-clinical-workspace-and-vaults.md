@@ -1,6 +1,6 @@
 # 9. Clinical workspace and data boundaries
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress; `backend/src/encounter.rs` implements the `ClinicalEncounterRecord` lifecycle (`Draft -> Reviewed -> Finalized -> Amended` / `EnteredInError`), optimistic concurrency (`ResourceVersion`), AES-256-GCM revision history preserving authoring provenance, cross-hospital longitudinal sharing checks (`HospitalSharingConsent`), and fail-closed audit-outage handling. Live HTTP clinical routes remain disabled (`404`).
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I08
 

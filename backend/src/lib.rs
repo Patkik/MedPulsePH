@@ -7,6 +7,7 @@
 
 pub mod auth;
 pub mod crypto;
+pub mod encounter;
 pub mod enrollment;
 pub mod nfc;
 pub mod vault;
@@ -35,6 +36,10 @@ mod tests {
             BlindIdDeriver, BlindPatientId, CryptoError, EnvelopeAad, ResourcePurpose,
             VaultCipherRing, VaultEncryptionKey,
         },
+        encounter::{
+            AuditStorageHealth, ClinicalEncounterRecord, ClinicalEncounterState, EncounterError,
+            HospitalSharingConsent, OutboxEventRecord,
+        },
         enrollment::{
             EnrollmentChannel, EnrollmentError, PatientEnrollmentRecord, PatientIdentityLinkState,
             WorkstationPairingToken,
@@ -44,7 +49,7 @@ mod tests {
             MAX_OFFLINE_RECORD2_TEXT_BYTES, NTAG424_NDEF_FILE_CAPACITY_BYTES, NdefDualRecordBudget,
             NfcError, Ntag424TagKeys, validate_band_status_transition,
         },
-        vault::{ResourceVersion, ScopedIdempotencyRecord, VaultError},
+        vault::{OutboxDeliveryState, ResourceVersion, ScopedIdempotencyRecord, VaultError},
     };
     use axum::{
         body::Body,
@@ -862,6 +867,247 @@ mod tests {
         assert_eq!(
             pairing.bind_verified_tap(&tap_for_doc_a, &nonce, 1_700_000_020),
             Err(EnrollmentError::PairingTokenExpiredOrConsumed)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn clinical_encounter_lifecycle_enforces_audit_outage_sharing_and_amendments()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let deriver = BlindIdDeriver::new(1, [0xA1; 32])?;
+        let blind_id = deriver.derive("synthetic-patient-enc-001")?;
+        let pin_verifier = PatientPinVerifier::new([0xB2; 32]);
+        let pin_hash = pin_verifier.hash_pin("384756")?;
+
+        let doctor_manila = sample_doctor("hosp-manila");
+        let doctor_cebu = sample_doctor("hosp-cebu");
+
+        let mut tap_manila = AcceptedTapContext::new(
+            "tap-enc-1".to_string(),
+            blind_id.clone(),
+            [0x04, 0x12, 0x23, 0x34, 0x45, 0x56, 0x67],
+            1,
+            BandStatus::Active,
+            "hosp-manila".to_string(),
+            doctor_manila.actor_id.clone(),
+            1_700_000_000,
+            120,
+        )?;
+        let session_manila = mint_verified_clinic_session(
+            &doctor_manila,
+            &mut tap_manila,
+            "384756",
+            &pin_hash,
+            &pin_verifier,
+            "sess-manila-1".to_string(),
+            1_700_000_010,
+            1,
+        )?;
+
+        let live_state = TransactionBoundaryState {
+            current_unix_secs: 1_700_000_100,
+            band_status: BandStatus::Active,
+            doctor_membership: MembershipStatus::Active,
+            doctor_credential: CredentialStatus::Approved {
+                reviewer_actor_id: "cred-reviewer-1".to_string(),
+            },
+            session_revoked: false,
+            patient_consent_withdrawn: false,
+            revocation_version: 1,
+        };
+
+        let mut ring = VaultCipherRing::new(VaultEncryptionKey::new("vault-b-enc-k1", [0x44; 32])?);
+
+        // Audit storage outage must fail closed before creating any clinical record.
+        assert!(matches!(
+            ClinicalEncounterRecord::create_draft(
+                &session_manila,
+                &live_state,
+                AuditStorageHealth::Outage,
+                &mut ring,
+                "enc-1001".to_string(),
+                blind_id.clone(),
+                "hosp-manila",
+                b"Initial synthetic draft note",
+            ),
+            Err(EncounterError::AuditStorageUnavailable)
+        ));
+
+        // Create Draft -> Review -> Finalize -> Amend with optimistic concurrency.
+        let mut encounter = ClinicalEncounterRecord::create_draft(
+            &session_manila,
+            &live_state,
+            AuditStorageHealth::Healthy,
+            &mut ring,
+            "enc-1001".to_string(),
+            blind_id.clone(),
+            "hosp-manila",
+            b"Initial synthetic draft note",
+        )?;
+        assert_eq!(encounter.current_state(), ClinicalEncounterState::Draft);
+        assert_eq!(encounter.current_version(), ResourceVersion::new(1));
+
+        let v2 = encounter.update_draft_or_review(
+            &session_manila,
+            &live_state,
+            AuditStorageHealth::Healthy,
+            &mut ring,
+            ResourceVersion::new(1),
+            true,
+            b"Reviewed synthetic clinical assessment",
+        )?;
+        assert_eq!(v2, ResourceVersion::new(2));
+        assert_eq!(encounter.current_state(), ClinicalEncounterState::Reviewed);
+
+        // Stale tab version (v1 instead of v2) is rejected.
+        assert_eq!(
+            encounter.finalize(
+                &session_manila,
+                &live_state,
+                AuditStorageHealth::Healthy,
+                &mut ring,
+                ResourceVersion::new(1),
+                b"Stale finalize attempt",
+            ),
+            Err(EncounterError::Vault(VaultError::StaleResourceVersion {
+                expected: 1,
+                actual: 2
+            }))
+        );
+
+        let v3 = encounter.finalize(
+            &session_manila,
+            &live_state,
+            AuditStorageHealth::Healthy,
+            &mut ring,
+            ResourceVersion::new(2),
+            b"Finalized synthetic encounter summary",
+        )?;
+        assert_eq!(v3, ResourceVersion::new(3));
+        assert_eq!(encounter.current_state(), ClinicalEncounterState::Finalized);
+
+        // Finalized encounter cannot be overwritten via draft update; requires traceable amendment.
+        assert!(matches!(
+            encounter.update_draft_or_review(
+                &session_manila,
+                &live_state,
+                AuditStorageHealth::Healthy,
+                &mut ring,
+                ResourceVersion::new(3),
+                false,
+                b"Illegal draft overwrite",
+            ),
+            Err(EncounterError::InvalidEncounterStateTransition { .. })
+        ));
+
+        let v4 = encounter.amend_finalized(
+            &session_manila,
+            &live_state,
+            AuditStorageHealth::Healthy,
+            &mut ring,
+            ResourceVersion::new(3),
+            "Addendum: synthetic potassium recheck noted",
+            b"Finalized synthetic encounter summary + addendum",
+        )?;
+        assert_eq!(v4, ResourceVersion::new(4));
+        assert_eq!(encounter.current_state(), ClinicalEncounterState::Amended);
+        assert_eq!(encounter.revisions().len(), 4);
+
+        // Cross-hospital session at hosp-cebu is blocked when sharing policy is SourceHospitalOnly.
+        let mut tap_cebu = AcceptedTapContext::new(
+            "tap-enc-cebu".to_string(),
+            blind_id,
+            [0x04, 0x12, 0x23, 0x34, 0x45, 0x56, 0x67],
+            2,
+            BandStatus::Active,
+            "hosp-cebu".to_string(),
+            doctor_cebu.actor_id.clone(),
+            1_700_000_050,
+            120,
+        )?;
+        let session_cebu = mint_verified_clinic_session(
+            &doctor_cebu,
+            &mut tap_cebu,
+            "384756",
+            &pin_hash,
+            &pin_verifier,
+            "sess-cebu-1".to_string(),
+            1_700_000_060,
+            1,
+        )?;
+        assert_eq!(
+            encounter.read_latest_decrypted(
+                &session_cebu,
+                "hosp-cebu",
+                &HospitalSharingConsent::SourceHospitalOnly,
+                &live_state,
+                AuditStorageHealth::Healthy,
+                &ring,
+            ),
+            Err(EncounterError::CrossHospitalRecordNotShared)
+        );
+
+        // Explicit longitudinal sharing consent allows hosp-cebu to read and records audit provenance.
+        let decrypted = encounter.read_latest_decrypted(
+            &session_cebu,
+            "hosp-cebu",
+            &HospitalSharingConsent::ExplicitHospitalList(vec!["hosp-cebu".to_string()]),
+            &live_state,
+            AuditStorageHealth::Healthy,
+            &ring,
+        )?;
+        assert_eq!(
+            decrypted,
+            b"Finalized synthetic encounter summary + addendum"
+        );
+
+        // PrivacyAuditor receives minimized audit metadata without clinical note plaintext/ciphertext.
+        let auditor = AuthenticatedActor {
+            actor_id: "aud-1".to_string(),
+            hospital_id: Some("hosp-manila".to_string()),
+            role: Role::PrivacyAuditor,
+            membership_status: MembershipStatus::Active,
+            credential_status: CredentialStatus::NotApplicable,
+            mfa_verified: true,
+        };
+        let projected =
+            encounter.project_minimized_audit_for_privacy_auditor(&auditor, "hosp-manila")?;
+        assert_eq!(projected.len(), 4);
+        let serialized_audit = serde_json::to_string(&projected)?;
+        assert!(!serialized_audit.contains("addendum"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn outbox_event_lifecycle_bounds_retries_and_dead_letters()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut event = OutboxEventRecord::new(
+            "evt-001".to_string(),
+            "patient.access_notification".to_string(),
+            2,
+        );
+        assert_eq!(event.state(), OutboxDeliveryState::Pending);
+
+        assert_eq!(event.lease()?, OutboxDeliveryState::Leased);
+        assert_eq!(
+            event.record_failure("gateway_timeout")?,
+            OutboxDeliveryState::RetryableFailure
+        );
+        assert_eq!(event.attempt_count(), 1);
+
+        // Second failed attempt exhausts max_attempts (2) and transitions to DeadLettered.
+        assert_eq!(event.lease()?, OutboxDeliveryState::Leased);
+        assert_eq!(
+            event.record_failure("gateway_timeout")?,
+            OutboxDeliveryState::DeadLettered
+        );
+        assert_eq!(
+            event.lease(),
+            Err(EncounterError::InvalidOutboxTransition(
+                OutboxDeliveryState::DeadLettered
+            ))
         );
 
         Ok(())

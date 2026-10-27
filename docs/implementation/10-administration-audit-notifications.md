@@ -1,6 +1,6 @@
 # 10. Administration, audit, and notifications
 
-**Status:** In progress (I07 audit foundation). Vault B's `immutable_audit_logs` table (`backend/sql/vault_b_clinical.sql`) enforces `SELECT, INSERT`-only runtime grants for `clinical_app` and a database trigger (`prevent_immutable_audit_mutation`) blocking `UPDATE`, `DELETE`, and `TRUNCATE`. `AuthorizedClinicalAccess` (`backend/src/vault.rs`) commits the audit record inside the same PostgreSQL transaction as encrypted clinical reads and writes. Staff administration, privacy workspaces, and notification delivery remain unimplemented.
+**Status:** In progress (I07 audit, privacy projection, and outbox foundation). Vault B's `immutable_audit_logs` table (`backend/sql/vault_b_clinical.sql`) enforces `SELECT, INSERT`-only runtime grants for `clinical_app` and a database trigger (`prevent_immutable_audit_mutation`) blocking `UPDATE`, `DELETE`, and `TRUNCATE`. `AuthorizedClinicalAccess` (`backend/src/vault.rs`) commits the audit record inside the same PostgreSQL transaction as encrypted clinical reads and writes, and `backend/src/encounter.rs` implements `MinimizedAuditEventProjection` (for `Role::PrivacyAuditor` without clinical note access), fail-closed `AuditStorageHealth::Outage` enforcement, and bounded `OutboxEventRecord` retry/dead-letter transitions. Live HTTP admin/notification endpoints remain disabled (`404`).
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I07
 
