@@ -1,0 +1,10 @@
+.mcp.json
+.env
+.env.*
+!.env.example
+node_modules/
+target/
+dist/
+coverage/
+.expo/
+*.log
