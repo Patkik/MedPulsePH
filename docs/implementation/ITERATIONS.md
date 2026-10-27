@@ -57,7 +57,7 @@ Small deliverables:
 
 **Read:** [Users/workspaces](03-users-and-workspaces.md), [dashboards](06-dashboards.md), [UI design/resilience](12-ui-design-and-resilience.md), [logo brief](13-logo-and-identity.md), and [screen/API specifications](28-screen-and-api-specifications.md).
 
-**Current artifact:** An early Expo web design preview in `app/`. It uses no real patient data, does not authenticate users, and does not implement clinical or NFC access. Formal dashboard flows, logo stress tests, stakeholder reviews, and access control remain outstanding.
+**Current artifact:** An early Expo web design preview in `app/`. It uses no real patient data, does not authenticate users, and does not implement clinical or NFC access. See [preview evidence and open items](I03-PREVIEW-EVIDENCE.md). Formal dashboard flows, logo stress tests, stakeholder reviews, and access control remain outstanding.
 
 Small deliverables:
 
