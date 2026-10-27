@@ -11,7 +11,8 @@ services:
       APP_DB_PASSWORD: ${IDENTITY_APP_PASSWORD:?Run node scripts/setup-local-env.mjs first}
     volumes:
       - identity-data:/var/lib/postgresql/data
-      - ./docker/postgres/init-app-user.sh:/docker-entrypoint-initdb.d/init-app-user.sh:ro
+      - ./docker/postgres/init-app-user.sh:/docker-entrypoint-initdb.d/01-init-app-user.sh:ro
+      - ./backend/sql/vault_a_identity.sql:/docker-entrypoint-initdb.d/02-vault-a-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "PGPASSWORD=$${APP_DB_PASSWORD} psql -w -h 127.0.0.1 -U identity_app -d identity_vault -tAc 'SELECT 1' | grep -qx 1"]
       interval: 5s
@@ -29,7 +30,8 @@ services:
       APP_DB_PASSWORD: ${CLINICAL_APP_PASSWORD:?Run node scripts/setup-local-env.mjs first}
     volumes:
       - clinical-data:/var/lib/postgresql/data
-      - ./docker/postgres/init-app-user.sh:/docker-entrypoint-initdb.d/init-app-user.sh:ro
+      - ./docker/postgres/init-app-user.sh:/docker-entrypoint-initdb.d/01-init-app-user.sh:ro
+      - ./backend/sql/vault_b_clinical.sql:/docker-entrypoint-initdb.d/02-vault-b-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "PGPASSWORD=$${APP_DB_PASSWORD} psql -w -h 127.0.0.1 -U clinical_app -d clinical_vault -tAc 'SELECT 1' | grep -qx 1"]
       interval: 5s

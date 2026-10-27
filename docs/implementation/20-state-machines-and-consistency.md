@@ -1,6 +1,6 @@
 # 20. Durable state machines and cross-vault consistency
 
-**Status:** In progress (I04 foundation). Compile-time `ClinicalPool` capability gating (`authorize_clinical_access`), transaction-boundary session revalidation, scoped idempotency verification (`ScopedIdempotencyRecord`), and optimistic concurrency version checks (`ResourceVersion`) are implemented in `backend/src/vault.rs`. Durable PostgreSQL schemas, outbox workers, and replay persistence remain in progress.
+**Status:** In progress (I04 foundation). Compile-time `ClinicalPool` capability gating (`authorize_clinical_access`), transaction-boundary session revalidation, scoped idempotency verification (`ScopedIdempotencyRecord`), optimistic concurrency version checks (`ResourceVersion`), and PostgreSQL schemas/transactional repositories (`backend/sql/vault_a_identity.sql`, `backend/sql/vault_b_clinical.sql`, `IdentityPool::accept_tap_proof_durable`, and `AuthorizedClinicalAccess` audit+record transactions) are implemented. Outbox worker loops and HTTP endpoints remain in progress.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I04
 

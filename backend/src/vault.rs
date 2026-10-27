@@ -1,21 +1,26 @@
 //! Split-vault isolation, transaction-boundary capability enforcement, idempotency,
-//! optimistic resource versioning, and cross-vault outbox contracts (`20-state-machines-and-consistency.md`).
+//! optimistic resource versioning, and PostgreSQL repository transactions (`20-state-machines-and-consistency.md`).
 
 use crate::{
-    auth::{AuthError, TransactionBoundaryState, VerifiedClinicSession},
-    crypto::BlindPatientId,
+    auth::{AcceptedTapContext, AuthError, BandStatus, TransactionBoundaryState, VerifiedClinicSession},
+    crypto::{BlindPatientId, CryptoError, EncryptedEnvelope, ResourcePurpose},
+    nfc::NfcError,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use subtle::ConstantTimeEq;
 use thiserror::Error;
 
-/// Typed errors for vault capability, idempotency, and optimistic concurrency enforcement.
+/// Typed errors for vault capability, idempotency, optimistic concurrency, and SQL persistence.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum VaultError {
     #[error("clinical capability check failed: {0}")]
     Authorization(#[from] AuthError),
+    #[error("cryptographic identifier or envelope error: {0}")]
+    Crypto(#[from] CryptoError),
+    #[error("NFC replay or band status error: {0}")]
+    Nfc(#[from] NfcError),
     #[error("idempotency key must not be empty")]
     EmptyIdempotencyKey,
     #[error("idempotency key was reused with a different request payload or scope")]
@@ -24,6 +29,10 @@ pub enum VaultError {
     StaleResourceVersion { expected: u64, actual: u64 },
     #[error("audit event action type must not be empty")]
     EmptyAuditAction,
+    #[error("requested record was not found in the vault")]
+    RecordNotFound,
+    #[error("database transaction or query failed")]
+    DatabaseOperationFailed,
 }
 
 /// A connection pool exclusively for Vault A (Identity PII, hospital memberships, and durable NFC counter state).
@@ -52,9 +61,143 @@ impl IdentityPool {
         &self.0
     }
 
+    /// Atomically verifies `band_status == 'active'` and `incoming_counter > high_water_counter`
+    /// inside a Vault A PostgreSQL transaction (`SELECT ... FOR UPDATE`), advances the durable
+    /// high-water counter, and inserts an `accepted_tap_contexts` row (`08-replay-and-clinical-authorization.md`).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn accept_tap_proof_durable(
+        &self,
+        tag_uid: [u8; 7],
+        incoming_counter: u32,
+        context_id: &str,
+        hospital_id: &str,
+        doctor_actor_id: &str,
+        issued_at_unix: u64,
+        ttl_secs: u64,
+    ) -> Result<AcceptedTapContext, VaultError> {
+        let tag_uid_hex = hex::encode(tag_uid);
+        let mut tx = self
+            .0
+            .begin()
+            .await
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        let row = sqlx::query(
+            "SELECT blind_patient_id, band_status, high_water_counter \
+             FROM nfc_bands WHERE tag_uid_hex = $1 FOR UPDATE",
+        )
+        .bind(&tag_uid_hex)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| VaultError::DatabaseOperationFailed)?
+        .ok_or(VaultError::RecordNotFound)?;
+
+        let blind_id_str: String = row
+            .try_get("blind_patient_id")
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+        let status_str: String = row
+            .try_get("band_status")
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+        let high_water_i64: i64 = row
+            .try_get("high_water_counter")
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        let blind_patient_id = BlindPatientId::from_canonical_str(&blind_id_str)?;
+        let band_status = parse_band_status(&status_str)?;
+        if band_status != BandStatus::Active {
+            return Err(VaultError::Nfc(NfcError::BandNotActive(band_status)));
+        }
+
+        let high_water = u32::try_from(high_water_i64).unwrap_or(u32::MAX);
+        if incoming_counter <= high_water {
+            return Err(VaultError::Nfc(NfcError::ReplayRejected {
+                incoming: incoming_counter,
+                high_water,
+            }));
+        }
+
+        let incoming_i64 = i64::from(incoming_counter);
+        let issued_i64 = i64::try_from(issued_at_unix).map_err(|_| VaultError::DatabaseOperationFailed)?;
+        let expires_at_unix = issued_at_unix.saturating_add(ttl_secs);
+        let expires_i64 =
+            i64::try_from(expires_at_unix).map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        sqlx::query(
+            "UPDATE nfc_bands \
+             SET high_water_counter = $1, resource_version = resource_version + 1, updated_at_unix = $2 \
+             WHERE tag_uid_hex = $3",
+        )
+        .bind(incoming_i64)
+        .bind(issued_i64)
+        .bind(&tag_uid_hex)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        sqlx::query(
+            "INSERT INTO accepted_tap_contexts \
+             (context_id, blind_patient_id, tag_uid_hex, accepted_counter, hospital_id, doctor_actor_id, state, failed_pin_attempts, issued_at_unix, expires_at_unix) \
+             VALUES ($1, $2, $3, $4, $5, $6, 'proof_accepted', 0, $7, $8)",
+        )
+        .bind(context_id)
+        .bind(&blind_id_str)
+        .bind(&tag_uid_hex)
+        .bind(incoming_i64)
+        .bind(hospital_id)
+        .bind(doctor_actor_id)
+        .bind(issued_i64)
+        .bind(expires_i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        tx.commit()
+            .await
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        Ok(AcceptedTapContext::new(
+            context_id.to_string(),
+            blind_patient_id,
+            tag_uid,
+            incoming_counter,
+            band_status,
+            hospital_id.to_string(),
+            doctor_actor_id.to_string(),
+            issued_at_unix,
+            ttl_secs,
+        )?)
+    }
+
     pub async fn close(&self) {
         self.0.close().await;
     }
+}
+
+fn parse_band_status(status: &str) -> Result<BandStatus, VaultError> {
+    match status {
+        "inventory" => Ok(BandStatus::Inventory),
+        "provisioning" => Ok(BandStatus::Provisioning),
+        "verification_pending" => Ok(BandStatus::VerificationPending),
+        "active" => Ok(BandStatus::Active),
+        "frozen" => Ok(BandStatus::Frozen),
+        "replacement_pending" => Ok(BandStatus::ReplacementPending),
+        "retired" => Ok(BandStatus::Retired),
+        "failed" => Ok(BandStatus::Failed),
+        _ => Err(VaultError::DatabaseOperationFailed),
+    }
+}
+
+/// Stored encrypted clinical record metadata and envelope in Vault B.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredClinicalRecord {
+    pub record_id: String,
+    pub blind_patient_id: BlindPatientId,
+    pub hospital_id: String,
+    pub purpose: ResourcePurpose,
+    pub schema_version: u16,
+    pub envelope: EncryptedEnvelope,
+    pub resource_version: ResourceVersion,
+    pub updated_at_unix: u64,
 }
 
 /// Guard proving that a `VerifiedClinicSession` passed transaction-boundary revalidation
@@ -71,6 +214,146 @@ impl<'a> AuthorizedClinicalAccess<'a> {
 
     pub fn audit_record(&self) -> &ClinicalAuditRecord {
         &self.audit_record
+    }
+
+    /// Inserts the mandatory `immutable_audit_logs` entry and a new `clinical_encrypted_records`
+    /// row inside a single Vault B transaction. Fails closed if the audit write fails.
+    pub async fn insert_encrypted_record_with_audit(
+        &self,
+        record_id: &str,
+        purpose: ResourcePurpose,
+        schema_version: u16,
+        envelope: &EncryptedEnvelope,
+    ) -> Result<ResourceVersion, VaultError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        let recorded_at_i64 = i64::try_from(self.audit_record.recorded_at_unix)
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        sqlx::query(
+            "INSERT INTO immutable_audit_logs \
+             (blind_patient_id, doctor_actor_id, hospital_id, session_reference, action_type, recorded_at_unix) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(&self.audit_record.blind_patient_id)
+        .bind(&self.audit_record.doctor_actor_id)
+        .bind(&self.audit_record.hospital_id)
+        .bind(&self.audit_record.session_reference)
+        .bind(&self.audit_record.action_type)
+        .bind(recorded_at_i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        sqlx::query(
+            "INSERT INTO clinical_encrypted_records \
+             (record_id, blind_patient_id, hospital_id, resource_purpose, schema_version, envelope_version, key_id, nonce, ciphertext_with_tag, resource_version, updated_at_unix) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, $10)",
+        )
+        .bind(record_id)
+        .bind(&self.audit_record.blind_patient_id)
+        .bind(&self.audit_record.hospital_id)
+        .bind(purpose.as_str())
+        .bind(i32::from(schema_version))
+        .bind(i32::from(envelope.envelope_version))
+        .bind(&envelope.key_id)
+        .bind(&envelope.nonce[..])
+        .bind(&envelope.ciphertext_with_tag)
+        .bind(recorded_at_i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        tx.commit()
+            .await
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        Ok(ResourceVersion::INITIAL)
+    }
+
+    /// Inserts the mandatory `immutable_audit_logs` entry and reads an encrypted clinical record
+    /// scoped to the session's `blind_patient_id` inside a single Vault B transaction.
+    pub async fn fetch_encrypted_record_with_audit(
+        &self,
+        record_id: &str,
+    ) -> Result<(EncryptedEnvelope, ResourceVersion), VaultError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        let recorded_at_i64 = i64::try_from(self.audit_record.recorded_at_unix)
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        sqlx::query(
+            "INSERT INTO immutable_audit_logs \
+             (blind_patient_id, doctor_actor_id, hospital_id, session_reference, action_type, recorded_at_unix) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(&self.audit_record.blind_patient_id)
+        .bind(&self.audit_record.doctor_actor_id)
+        .bind(&self.audit_record.hospital_id)
+        .bind(&self.audit_record.session_reference)
+        .bind(&self.audit_record.action_type)
+        .bind(recorded_at_i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        let row = sqlx::query(
+            "SELECT envelope_version, key_id, nonce, ciphertext_with_tag, resource_version \
+             FROM clinical_encrypted_records \
+             WHERE record_id = $1 AND blind_patient_id = $2",
+        )
+        .bind(record_id)
+        .bind(&self.audit_record.blind_patient_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| VaultError::DatabaseOperationFailed)?
+        .ok_or(VaultError::RecordNotFound)?;
+
+        let envelope_version_i32: i32 = row
+            .try_get("envelope_version")
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+        let key_id: String = row
+            .try_get("key_id")
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+        let nonce_vec: Vec<u8> = row
+            .try_get("nonce")
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+        let ciphertext_with_tag: Vec<u8> = row
+            .try_get("ciphertext_with_tag")
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+        let resource_version_i64: i64 = row
+            .try_get("resource_version")
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        let nonce: [u8; 12] = nonce_vec
+            .try_into()
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+        let envelope_version = u16::try_from(envelope_version_i32)
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+        let resource_version = u64::try_from(resource_version_i64)
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        tx.commit()
+            .await
+            .map_err(|_| VaultError::DatabaseOperationFailed)?;
+
+        Ok((
+            EncryptedEnvelope {
+                envelope_version,
+                key_id,
+                nonce,
+                ciphertext_with_tag,
+            },
+            ResourceVersion::new(resource_version),
+        ))
     }
 }
 
