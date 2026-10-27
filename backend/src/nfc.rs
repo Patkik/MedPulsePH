@@ -345,6 +345,10 @@ impl DurableBandReplayState {
         }
     }
 
+    pub fn blind_patient_id(&self) -> &BlindPatientId {
+        &self.blind_patient_id
+    }
+
     pub fn band_status(&self) -> BandStatus {
         self.band_status
     }

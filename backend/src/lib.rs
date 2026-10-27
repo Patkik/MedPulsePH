@@ -7,6 +7,7 @@
 
 pub mod auth;
 pub mod crypto;
+pub mod enrollment;
 pub mod nfc;
 pub mod vault;
 
@@ -33,6 +34,10 @@ mod tests {
         crypto::{
             BlindIdDeriver, BlindPatientId, CryptoError, EnvelopeAad, ResourcePurpose,
             VaultCipherRing, VaultEncryptionKey,
+        },
+        enrollment::{
+            EnrollmentChannel, EnrollmentError, PatientEnrollmentRecord, PatientIdentityLinkState,
+            WorkstationPairingToken,
         },
         nfc::{
             DurableBandReplayState, EmergencyFieldProvenance, EmergencyTriageSummary,
@@ -633,6 +638,231 @@ mod tests {
         assert!(serialized.contains("critical_allergies"));
         assert!(serialized.contains("ice_contact"));
         assert!(!serialized.contains("chronic_alerts"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn enrollment_requires_verified_identity_private_pin_and_retires_replaced_band()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let deriver = BlindIdDeriver::new(1, [0x77; 32])?;
+        let blind_id = deriver.derive("synthetic-patient-enroll-001")?;
+        let pin_verifier = PatientPinVerifier::new([0x88; 32]);
+
+        let reception = AuthenticatedActor {
+            actor_id: "rec-201".to_string(),
+            hospital_id: Some("hosp-manila".to_string()),
+            role: Role::Reception,
+            membership_status: MembershipStatus::Active,
+            credential_status: CredentialStatus::NotApplicable,
+            mfa_verified: true,
+        };
+        let band_officer = AuthenticatedActor {
+            actor_id: "band-301".to_string(),
+            hospital_id: Some("hosp-manila".to_string()),
+            role: Role::BandOfficer,
+            membership_status: MembershipStatus::Active,
+            credential_status: CredentialStatus::NotApplicable,
+            mfa_verified: true,
+        };
+
+        let mut enrollment = PatientEnrollmentRecord::register_assisted(
+            &reception,
+            "hosp-manila",
+            blind_id,
+            EnrollmentChannel::AssistedNoPhoneAtHospital,
+        )?;
+        assert_eq!(
+            enrollment.identity_link_state(),
+            &PatientIdentityLinkState::Proposed
+        );
+
+        let initial_keys = Ntag424TagKeys {
+            expected_uid: [0x04, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60],
+            sdm_meta_read_key: [0x11; 16],
+            sdm_file_read_key: [0x22; 16],
+        };
+
+        // Proposed / EvidencePending links cannot configure a PIN or bind a wristband.
+        enrollment.mark_evidence_pending(&reception)?;
+        assert_eq!(
+            enrollment.configure_patient_pin_privately(Role::Patient, "591827", &pin_verifier),
+            Err(EnrollmentError::IdentityLinkNotVerified)
+        );
+        assert!(matches!(
+            enrollment.issue_initial_band(&band_officer, "hosp-manila", initial_keys.clone()),
+            Err(EnrollmentError::IdentityLinkNotVerified)
+        ));
+
+        // Verify the identity link with explicit evidence reference.
+        enrollment.verify_identity_link(
+            &reception,
+            "hospital-id-check-ref-2026-001",
+            1_700_000_000,
+        )?;
+
+        // Reception or BandOfficer cannot set a patient's PIN on their behalf.
+        for staff_role in [Role::Reception, Role::BandOfficer, Role::Doctor, Role::HospitalAdmin] {
+            assert_eq!(
+                enrollment.configure_patient_pin_privately(staff_role, "591827", &pin_verifier),
+                Err(EnrollmentError::StaffCannotSetPatientPin)
+            );
+        }
+
+        // Band cannot be issued before the patient sets their private PIN.
+        assert!(matches!(
+            enrollment.issue_initial_band(&band_officer, "hosp-manila", initial_keys.clone()),
+            Err(EnrollmentError::PatientPinNotConfigured)
+        ));
+
+        // Patient privately configures their 6-digit PIN.
+        enrollment.configure_patient_pin_privately(Role::Patient, "591827", &pin_verifier)?;
+        assert!(enrollment.pin_hash().is_some());
+        let rev_before_replace = enrollment.revocation_version();
+
+        // Issue initial active band and accept tap counter 1.
+        let mut band_v1 =
+            enrollment.issue_initial_band(&band_officer, "hosp-manila", initial_keys.clone())?;
+        let prefix = b"https://medpulse.example/v1/tap?d=";
+        let (picc_1, cmac_1) = initial_keys.seal_sun_tap_for_vector(1, prefix)?;
+        band_v1.verify_and_accept_tap(
+            &picc_1,
+            &cmac_1,
+            prefix,
+            "tap-v1-1".to_string(),
+            "hosp-manila".to_string(),
+            "doc-101".to_string(),
+            1_700_000_010,
+            120,
+        )?;
+
+        // Replace band: old band is atomically retired and revocation_version advances.
+        let replacement_keys = Ntag424TagKeys {
+            expected_uid: [0x04, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            sdm_meta_read_key: [0x33; 16],
+            sdm_file_read_key: [0x44; 16],
+        };
+        let mut band_v2 = enrollment.replace_band(
+            &band_officer,
+            "hosp-manila",
+            &mut band_v1,
+            replacement_keys.clone(),
+        )?;
+        assert_eq!(band_v1.band_status(), BandStatus::Retired);
+        assert_eq!(band_v2.band_status(), BandStatus::Active);
+        assert!(enrollment.revocation_version() > rev_before_replace);
+
+        // Old retired band rejects any subsequent tap, even with a fresh counter.
+        let (picc_old_2, cmac_old_2) = initial_keys.seal_sun_tap_for_vector(2, prefix)?;
+        assert!(matches!(
+            band_v1.verify_and_accept_tap(
+                &picc_old_2,
+                &cmac_old_2,
+                prefix,
+                "tap-v1-2".to_string(),
+                "hosp-manila".to_string(),
+                "doc-101".to_string(),
+                1_700_000_020,
+                120,
+            ),
+            Err(NfcError::BandNotActive(BandStatus::Retired))
+        ));
+
+        // Replacement band accepts its own fresh counter.
+        let (picc_new_1, cmac_new_1) = replacement_keys.seal_sun_tap_for_vector(1, prefix)?;
+        let ctx_new = band_v2.verify_and_accept_tap(
+            &picc_new_1,
+            &cmac_new_1,
+            prefix,
+            "tap-v2-1".to_string(),
+            "hosp-manila".to_string(),
+            "doc-101".to_string(),
+            1_700_000_025,
+            120,
+        )?;
+        assert_eq!(ctx_new.accepted_counter(), 1);
+
+        // Disputed identity link immediately blocks further band replacement.
+        enrollment.mark_disputed("potential duplicate demographic match under review")?;
+        assert!(matches!(
+            enrollment.replace_band(
+                &band_officer,
+                "hosp-manila",
+                &mut band_v2,
+                initial_keys
+            ),
+            Err(EnrollmentError::IdentityLinkNotVerified)
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn workstation_pairing_bridges_tap_without_bypassing_or_redirecting_authority()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let deriver = BlindIdDeriver::new(1, [0x66; 32])?;
+        let blind_id = deriver.derive("synthetic-patient-pair-001")?;
+        let doctor_a = sample_doctor("hosp-manila");
+        let mut doctor_b = sample_doctor("hosp-manila");
+        doctor_b.actor_id = "doc-202".to_string();
+
+        let nonce = [0x5C; 16];
+        let mut pairing = WorkstationPairingToken::issue(
+            &doctor_a,
+            "hosp-manila",
+            "pair-001".to_string(),
+            "ws-opd-04".to_string(),
+            nonce,
+            1_700_000_000,
+            60,
+        )?;
+
+        let tap_for_doc_a = AcceptedTapContext::new(
+            "tap-ctx-doc-a".to_string(),
+            blind_id.clone(),
+            [0x04, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
+            9,
+            BandStatus::Active,
+            "hosp-manila".to_string(),
+            doctor_a.actor_id.clone(),
+            1_700_000_010,
+            120,
+        )?;
+        let tap_for_doc_b = AcceptedTapContext::new(
+            "tap-ctx-doc-b".to_string(),
+            blind_id,
+            [0x04, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
+            10,
+            BandStatus::Active,
+            "hosp-manila".to_string(),
+            doctor_b.actor_id,
+            1_700_000_010,
+            120,
+        )?;
+
+        // Wrong challenge nonce is rejected.
+        assert_eq!(
+            pairing.bind_verified_tap(&tap_for_doc_a, &[0x00; 16], 1_700_000_015),
+            Err(EnrollmentError::PairingNonceMismatch)
+        );
+
+        // Redirecting another doctor's tap to this workstation pairing is rejected.
+        assert_eq!(
+            pairing.bind_verified_tap(&tap_for_doc_b, &nonce, 1_700_000_015),
+            Err(EnrollmentError::PairingScopeMismatch)
+        );
+
+        // Valid doctor + hospital + nonce binds the verified tap to the workstation once.
+        let paired = pairing.bind_verified_tap(&tap_for_doc_a, &nonce, 1_700_000_015)?;
+        assert_eq!(paired.workstation_id, "ws-opd-04");
+        assert_eq!(paired.tap_context_id, "tap-ctx-doc-a");
+        assert!(pairing.is_consumed());
+
+        // Reusing a consumed pairing token is rejected.
+        assert_eq!(
+            pairing.bind_verified_tap(&tap_for_doc_a, &nonce, 1_700_000_020),
+            Err(EnrollmentError::PairingTokenExpiredOrConsumed)
+        );
 
         Ok(())
     }

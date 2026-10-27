@@ -374,6 +374,14 @@ impl AcceptedTapContext {
         &self.context_id
     }
 
+    pub fn hospital_id(&self) -> &str {
+        &self.hospital_id
+    }
+
+    pub fn doctor_actor_id(&self) -> &str {
+        &self.doctor_actor_id
+    }
+
     pub fn accepted_counter(&self) -> u32 {
         self.accepted_counter
     }

@@ -1,6 +1,6 @@
 # 5. Registration, login, and recovery flows
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress; `backend/src/enrollment.rs` implements `PatientEnrollmentRecord`, `PatientIdentityLinkState` (`Proposed`, `EvidencePending`, `Verified`, `Disputed`, `Superseded`), private patient-held 6-digit PIN setup blocking staff role submissions, atomic band replacement retiring the prior band, and single-use `WorkstationPairingToken` binding. Live HTTP auth/MFA routes remain disabled (`404`).
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I02
 
