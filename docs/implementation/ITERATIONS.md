@@ -2,7 +2,7 @@
 
 [Plan index](../../IMPLEMENTATION_PLAN.md)
 
-**Status:** I01 has a proposed pilot baseline, I03 has a synthetic-data design preview, and I04 has begun with baseline skill alignment and a local Docker/database foundation. These are partial iterations; they do not implement authentication, clinical care, or production access controls and do not authorize real-patient use. Ongoing semantic skill review remains required as features change.
+**Status:** I01 has a proposed pilot baseline, I02 has in-memory RBAC and dual-custody PIN handshake contracts, I03 has a synthetic-data design preview, I04 has baseline skill alignment, a local Docker/database foundation, and cryptographic/capability contracts, and I05 has NTAG 424 DNA SUN verification, 256-byte NDEF budget validation, and durable replay state logic. These are partial iterations; they do not expose live authentication or clinical HTTP routes and do not authorize real-patient use. Ongoing semantic skill review remains required as features change.
 
 The 29 specifications are the requirement sources. This file describes manageable work packages and their dependencies. Each package can take several small changes; it is not a promised calendar sprint. Package numbers are stable identifiers, not a requirement to finish every package strictly in numerical order.
 
@@ -14,7 +14,7 @@ The 29 specifications are the requirement sources. This file describes manageabl
 | I02 | Roles, accounts, and authentication | Relevant I01 identity and authorization decisions | In progress; in-memory RBAC, Argon2id PIN verifier, and 15-minute `VerifiedClinicSession` typestate contracts implemented; HTTP auth/MFA routes pending |
 | I03 | Screen flows, dashboard specifications, and brand | Relevant I01 user and scope decisions; use I02 permission contract | In progress; early role preview only |
 | I04 | Vaults, keys, state machines, and skill alignment | Relevant I01 boundaries; I02 capability contract | In progress; skill alignment, Docker vaults, `BlindPatientId` HMAC, versioned AES-256-GCM envelopes, and capability/idempotency contracts implemented; SQL schemas and durable replay persistence pending |
-| I05 | NFC proof and emergency access | I04 durable state and keys; I02 actor/context contracts for clinical handoff | Planned; owner unassigned |
+| I05 | NFC proof and emergency access | I04 durable state and keys; I02 actor/context contracts for clinical handoff | In progress; NTAG 424 DNA SUN crypto, 256-byte NDEF budget validator, durable replay state with Redis eviction recovery, and narrow Tier-1 emergency model implemented in `backend/src/nfc.rs`; SQL persistence and HTTP routes pending |
 | I06 | Patient enrollment, bands, and workstation pairing | I02 identity; I04 state transitions; I05 verified reading | Planned; owner unassigned |
 | I07 | Administration, durable audit, and operational events | I02 permissions; I04 repositories and service capabilities | Planned; owner unassigned |
 | I08 | Complete authorized encounter | I03 encounter specification; I05–I07 relevant workflows | Planned; owner unassigned |

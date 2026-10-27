@@ -1,6 +1,6 @@
 # 8. Replay protection and clinical authorization
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress (I05 foundation). Durable high-water counter acceptance (`DurableBandReplayState`), Redis eviction recovery (preventing cache loss from authorizing old counters), single-consumption `AcceptedTapContext` issuance, and the Argon2id PIN handshake minting a 15-minute `VerifiedClinicSession` are implemented in `backend/src/nfc.rs` and `backend/src/auth.rs` with unit tests. PostgreSQL/Redis SQL persistence and HTTP endpoints remain unimplemented.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I05
 

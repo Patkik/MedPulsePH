@@ -73,6 +73,9 @@ services:
     entrypoint: ["cargo"]
     network_mode: none
     volumes:
+      - ./Cargo.toml:/workspace/Cargo.toml:ro
+      - ./Cargo.lock:/workspace/Cargo.lock:ro
+      - ./backend:/workspace/backend:ro
       - rust-target:/workspace/target
 
 volumes:

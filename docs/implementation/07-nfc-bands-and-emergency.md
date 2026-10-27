@@ -1,6 +1,6 @@
 # 7. NFC, band issuance, and emergency access
 
-**Status:** Planning requirements; implementation not started.
+**Status:** In progress (I05 foundation). NTAG 424 DNA SUN AES-128 decryption, SV2 session MAC derivation, constant-time 8-byte truncated CMAC verification, band lifecycle state transitions, 256-byte dual-record NDEF budget validation (refusing allergy truncation), and the strictly bounded Tier-1 `EmergencyTriageSummary` structure with field provenance are implemented in `backend/src/nfc.rs` with unit tests. Hardware APDU provisioning, SQL persistence, and HTTP tap/emergency routes remain unimplemented.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I05
 

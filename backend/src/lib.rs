@@ -7,6 +7,7 @@
 
 pub mod auth;
 pub mod crypto;
+pub mod nfc;
 pub mod vault;
 
 pub use vault::{ClinicalPool, IdentityPool};
@@ -32,6 +33,11 @@ mod tests {
         crypto::{
             BlindIdDeriver, BlindPatientId, CryptoError, EnvelopeAad, ResourcePurpose,
             VaultCipherRing, VaultEncryptionKey,
+        },
+        nfc::{
+            DurableBandReplayState, EmergencyFieldProvenance, EmergencyTriageSummary,
+            MAX_OFFLINE_RECORD2_TEXT_BYTES, NTAG424_NDEF_FILE_CAPACITY_BYTES, NdefDualRecordBudget,
+            NfcError, Ntag424TagKeys, validate_band_status_transition,
         },
         vault::{ResourceVersion, ScopedIdempotencyRecord, VaultError},
     };
@@ -448,6 +454,185 @@ mod tests {
                 actual: 2
             })
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn ntag424_sun_verification_durable_replay_and_redis_eviction()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let deriver = BlindIdDeriver::new(1, [0x55; 32])?;
+        let blind_id = deriver.derive("synthetic-patient-nfc-001")?;
+        let uid = [0x04, 0x91, 0x82, 0x73, 0x64, 0x55, 0x46];
+        let keys = Ntag424TagKeys {
+            expected_uid: uid,
+            sdm_meta_read_key: [0xA5; 16],
+            sdm_file_read_key: [0x5A; 16],
+        };
+        let prefix = b"https://medpulse.example/v1/tap?d=";
+
+        let mut band_state =
+            DurableBandReplayState::new(blind_id, keys.clone(), BandStatus::Active, 0);
+
+        // Counter 1 succeeds and advances Vault A durable high-water state.
+        let (picc_1, cmac_1) = keys.seal_sun_tap_for_vector(1, prefix)?;
+        let ctx_1 = band_state.verify_and_accept_tap(
+            &picc_1,
+            &cmac_1,
+            prefix,
+            "tap-ctx-1".to_string(),
+            "hosp-manila".to_string(),
+            "doc-101".to_string(),
+            1_700_000_000,
+            120,
+        )?;
+        assert_eq!(ctx_1.accepted_counter(), 1);
+        assert_eq!(band_state.durable_high_water_counter(), 1);
+
+        // Tampered CMAC is rejected in constant time.
+        let mut bad_cmac = cmac_1.clone();
+        bad_cmac.replace_range(0..2, if &cmac_1[0..2] == "00" { "ff" } else { "00" });
+        assert!(matches!(
+            band_state.verify_and_accept_tap(
+                &picc_1,
+                &bad_cmac,
+                prefix,
+                "tap-ctx-bad".to_string(),
+                "hosp-manila".to_string(),
+                "doc-101".to_string(),
+                1_700_000_001,
+                120,
+            ),
+            Err(NfcError::InvalidSunCmac)
+        ));
+
+        // Skipped counter (counter = 5) is valid and advances high-water mark to 5.
+        let (picc_5, cmac_5) = keys.seal_sun_tap_for_vector(5, prefix)?;
+        let ctx_5 = band_state.verify_and_accept_tap(
+            &picc_5,
+            &cmac_5,
+            prefix,
+            "tap-ctx-5".to_string(),
+            "hosp-manila".to_string(),
+            "doc-101".to_string(),
+            1_700_000_005,
+            120,
+        )?;
+        assert_eq!(ctx_5.accepted_counter(), 5);
+        assert_eq!(band_state.durable_high_water_counter(), 5);
+
+        // Simulate Redis eviction/restart: Vault A durable high-water state still rejects counter <= 5.
+        band_state.simulate_redis_eviction();
+        assert_eq!(band_state.cached_redis_counter(), None);
+        assert!(matches!(
+            band_state.verify_and_accept_tap(
+                &picc_5,
+                &cmac_5,
+                prefix,
+                "tap-ctx-replay".to_string(),
+                "hosp-manila".to_string(),
+                "doc-101".to_string(),
+                1_700_000_006,
+                120,
+            ),
+            Err(NfcError::ReplayRejected {
+                incoming: 5,
+                high_water: 5
+            })
+        ));
+
+        // Counter 6 succeeds after Redis eviction and heals the cached Redis counter.
+        let (picc_6, cmac_6) = keys.seal_sun_tap_for_vector(6, prefix)?;
+        let ctx_6 = band_state.verify_and_accept_tap(
+            &picc_6,
+            &cmac_6,
+            prefix,
+            "tap-ctx-6".to_string(),
+            "hosp-manila".to_string(),
+            "doc-101".to_string(),
+            1_700_000_007,
+            120,
+        )?;
+        assert_eq!(ctx_6.accepted_counter(), 6);
+        assert_eq!(band_state.cached_redis_counter(), Some(6));
+
+        // Freezing the band immediately blocks new taps even with a fresh counter (counter = 7).
+        band_state.transition_status(BandStatus::Frozen)?;
+        let (picc_7, cmac_7) = keys.seal_sun_tap_for_vector(7, prefix)?;
+        assert!(matches!(
+            band_state.verify_and_accept_tap(
+                &picc_7,
+                &cmac_7,
+                prefix,
+                "tap-ctx-7".to_string(),
+                "hosp-manila".to_string(),
+                "doc-101".to_string(),
+                1_700_000_008,
+                120,
+            ),
+            Err(NfcError::BandNotActive(BandStatus::Frozen))
+        ));
+
+        // Terminal Retired state cannot transition back to Active.
+        band_state.transition_status(BandStatus::Retired)?;
+        assert_eq!(
+            validate_band_status_transition(BandStatus::Retired, BandStatus::Active),
+            Err(NfcError::InvalidBandTransition {
+                from: BandStatus::Retired,
+                to: BandStatus::Active
+            })
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn ndef_dual_record_256_byte_budget_refuses_allergy_truncation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let valid_budget = NdefDualRecordBudget::build_and_verify(
+            "medpulse.example",
+            "O+",
+            "Penicillin,Cefazolin",
+            "+639170000123",
+            "2026-10-28",
+        )?;
+        assert!(valid_budget.total_ndef_file_bytes <= NTAG424_NDEF_FILE_CAPACITY_BYTES);
+        assert!(valid_budget.record2_offline_text.len() <= MAX_OFFLINE_RECORD2_TEXT_BYTES);
+
+        // Oversized allergy string must fail provisioning rather than silently truncating allergies.
+        let long_allergies =
+            "Penicillin,Cefazolin,Sulfonamides,Carbamazepine,Phenytoin,Allopurinol,Lamotrigine,Abacavir,Nevirapine,Dapsone,Vancomycin";
+        assert!(matches!(
+            NdefDualRecordBudget::build_and_verify(
+                "medpulse.example",
+                "O+",
+                long_allergies,
+                "+639170000123",
+                "2026-10-28",
+            ),
+            Err(NfcError::NdefBudgetExceeded { .. })
+        ));
+
+        // Verify Tier-1 emergency triage summary serializes only the approved fields and provenance.
+        let triage = EmergencyTriageSummary {
+            blood_type: EmergencyFieldProvenance::ClinicianVerified {
+                hospital_id: "hosp-manila".to_string(),
+                verified_at_unix: 1_700_000_000,
+                value: "O+".to_string(),
+            },
+            critical_allergies: EmergencyFieldProvenance::ClinicianVerified {
+                hospital_id: "hosp-manila".to_string(),
+                verified_at_unix: 1_700_000_000,
+                value: "Penicillin".to_string(),
+            },
+            ice_contact: EmergencyFieldProvenance::NotRecorded,
+            offline_summary_updated_at_unix: 1_700_000_000,
+        };
+        let serialized = serde_json::to_string(&triage)?;
+        assert!(serialized.contains("blood_type"));
+        assert!(serialized.contains("critical_allergies"));
+        assert!(serialized.contains("ice_contact"));
+        assert!(!serialized.contains("chronic_alerts"));
 
         Ok(())
     }
