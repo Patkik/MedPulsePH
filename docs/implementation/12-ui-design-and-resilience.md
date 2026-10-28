@@ -1,6 +1,6 @@
 # 12. UI design and resilience
 
-**Status:** In progress; `app/src/app/` implements the calm `#F5F8F7` / `#15362F` / `#176856` clinical palette, sentence-case action labels, non-truncating allergy display (`/emergency`), 256-byte NDEF budget refusal (`/reception`), and interactive session-lock, band-freeze, connection-loss, and audit-outage states (`/doctor`, `/patient`, `/admin`).
+**Status:** In progress; the public home page is informational and sign-in, emergency, and protected workspace routes explicitly report that the service is unavailable. Synthetic interactive controls are no longer exposed. Authenticated workflows, accessibility review, and clinical interactions remain to be implemented and verified.
 
 [Plan index](../../IMPLEMENTATION_PLAN.md) | [Iteration packages](ITERATIONS.md) | Primary package: I03
 
