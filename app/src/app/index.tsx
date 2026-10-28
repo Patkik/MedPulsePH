@@ -1,24 +1,26 @@
 import { Link } from 'expo-router';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { PublicLayout, styles as shared } from '../components/PublicLayout';
+import { useTheme } from '../components/theme';
 
 export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const compact = width < 720;
+  const { colors } = useTheme();
   return <PublicLayout>
     <View style={[styles.hero, compact && styles.heroCompact]}>
       <View style={styles.intro}>
-        <Text style={styles.kicker}>For patients and care teams</Text>
-        <Text accessibilityRole="header" style={[styles.heading, compact && styles.headingCompact]}>Care information, closer when it matters.</Text>
-        <Text style={styles.lede}>MedPulsePH is being built to help patients and hospitals share essential information with care and clarity.</Text>
-        <Link href="/login" asChild><Pressable accessibilityRole="link" style={shared.primary}><Text style={shared.primaryText}>Go to sign in</Text></Pressable></Link>
+        <Text style={[styles.kicker, { color: colors.accent }]}>For patients and care teams</Text>
+        <Text accessibilityRole="header" style={[styles.heading, compact && styles.headingCompact, { color: colors.text }]}>Care information, closer when it matters.</Text>
+        <Text style={[styles.lede, { color: colors.body }]}>MedPulsePH is being built to help patients and hospitals share essential information with care and clarity.</Text>
+        <Link href="/login" asChild><Pressable accessibilityRole="link" style={[shared.primary, { backgroundColor: colors.button }]}><Text style={[shared.primaryText, { color: colors.buttonText }]}>Go to sign in</Text></Pressable></Link>
       </View>
-      <View style={styles.side}><Text style={styles.sideLabel}>A note on availability</Text><Text style={styles.sideHeading}>The service is not open yet.</Text><Text style={styles.sideBody}>Accounts, wristband access, and clinical records are still being developed. Please do not enter patient information.</Text></View>
+      <View style={[styles.side, { backgroundColor: colors.panel }]}><Text style={[styles.sideLabel, { color: colors.panelLabel }]}>A note on availability</Text><Text style={[styles.sideHeading, { color: colors.text }]}>The service is not open yet.</Text><Text style={[styles.sideBody, { color: colors.body }]}>Accounts, wristband access, and clinical records are still being developed. Please do not enter patient information.</Text></View>
     </View>
     <View style={styles.sections}>
-      <View style={styles.section}><Text style={styles.sectionTitle}>For patients</Text><Text style={styles.sectionBody}>A planned place to manage wristband access and understand how your information is shared.</Text></View>
-      <View style={styles.section}><Text style={styles.sectionTitle}>For hospitals</Text><Text style={styles.sectionBody}>Planned tools for authorized staff to support registration and patient care.</Text></View>
-      <View style={styles.section}><Text style={styles.sectionTitle}>In an emergency</Text><Text style={styles.sectionBody}>This website cannot provide emergency information yet. Contact local emergency services or seek immediate medical care.</Text></View>
+      <View style={[styles.section, { borderColor: colors.sectionRule }]}><Text style={[styles.sectionTitle, { color: colors.text }]}>For patients</Text><Text style={[styles.sectionBody, { color: colors.muted }]}>A planned place to manage wristband access and understand how your information is shared.</Text></View>
+      <View style={[styles.section, { borderColor: colors.sectionRule }]}><Text style={[styles.sectionTitle, { color: colors.text }]}>For hospitals</Text><Text style={[styles.sectionBody, { color: colors.muted }]}>Planned tools for authorized staff to support registration and patient care.</Text></View>
+      <View style={[styles.section, { borderColor: colors.sectionRule }]}><Text style={[styles.sectionTitle, { color: colors.text }]}>In an emergency</Text><Text style={[styles.sectionBody, { color: colors.muted }]}>This website cannot provide emergency information yet. Contact local emergency services or seek immediate medical care.</Text></View>
     </View>
   </PublicLayout>;
 }

@@ -8,6 +8,8 @@
 
 The interface should feel calm, clear, and reassuring. Use legible patient context, clear task status, restrained alerts, sentence case, stable form labels, a consistent type scale, and readable line lengths. Use color with text and symbols, not alone.
 
+The public pages follow the device color scheme by default and offer a light/dark control. An explicit choice is saved in the browser when storage is available; otherwise it lasts for the current session. This preference contains no patient data. Both themes still require full accessibility and device review.
+
 Candidate palette, subject to actual contrast testing:
 
 | Purpose | Color |
